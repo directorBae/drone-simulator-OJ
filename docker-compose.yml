@@ -1,0 +1,11 @@
+services:
+  droneoj:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "80:8080"
+    environment:
+      ADMIN_PASSWORD: "여기에-관리자-비밀번호"   # 꼭 바꾸세요
+      # COOKIE_SECURE: "1"                    # HTTPS(로드밸런서/nginx) 뒤에서 운영하면 켜기
+    volumes:
+      - ./data:/data                           # SQLite DB (학생 계정 · 코드 · 제출)

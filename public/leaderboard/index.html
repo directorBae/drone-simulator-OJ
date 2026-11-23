@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>스코어보드 — Drone OJ</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body class="bigboard">
+  <header class="bb-head">
+    <div><div class="bb-kicker">인공지능학과 특강 · 2일차 · 군집 경로 챌린지</div><h1>드론 20대, 충돌 없이 가장 빠르게</h1></div>
+    <div class="bb-clock" id="clock"></div>
+  </header>
+  <main id="board" class="bb-main"></main>
+  <div id="ticker" class="bb-ticker"></div>
+  <script type="module">
+    import { api, events } from '../js/day2/api.js';
+    import { renderLeaderboard } from '../js/day2/lb.js';
+    const $ = (id) => document.getElementById(id);
+    async function load() {
+      const lb = await api('/api/leaderboard').catch(() => null);
+      if (!lb) return;
+      if (!lb.rows) {
+        $('board').innerHTML = `<div class="lb-closed big">🔒 스코어보드 공개 전입니다${lb.openAt ? `<br><span id="cd" data-at="${lb.openAt}"></span>` : ''}</div>`;
+        return;
+      }
+      $('board').innerHTML = renderLeaderboard(lb, { big: true });
+    }
+    setInterval(() => {
+      $('clock').textContent = new Date().toLocaleTimeString('ko-KR');
+      const cd = document.getElementById('cd');
+      if (cd) { const ms = Date.parse(cd.dataset.at) - Date.now(); cd.textContent = ms > 0 ? `공개까지 ${Math.floor(ms / 60000)}분 ${Math.floor(ms / 1000) % 60}초` : '곧 공개됩니다'; }
+    }, 500);
+    events({
+      leaderboard: load, config: load,
+      submission: (s) => { const t = $('ticker'); t.textContent = `📥 ${s.name} 님 제출 — ${s.allAc ? '🎉 5개 모두 성공!' : `${s.acCount}/5 성공`}`; t.classList.remove('show'); void t.offsetWidth; t.classList.add('show'); },
+    });
+    load();
+  </script>
+</body>
+</html>

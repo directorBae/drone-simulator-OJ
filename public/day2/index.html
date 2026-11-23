@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>2일차 · 군집 경로 챌린지 — Drone OJ</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/lint/lint.min.css">
+  <link rel="stylesheet" href="../css/style.css">
+  <script type="importmap">
+  { "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  } }
+  </script>
+</head>
+<body class="day2">
+  <!-- 로그인 / 가입 -->
+  <div id="auth" hidden>
+    <form id="authForm" class="auth-card" data-mode="login">
+      <h1>✈ Drone OJ <small>2일차 · 군집 경로 챌린지</small></h1>
+      <div class="auth-tabs"><button type="button" class="auth-tab active" data-mode="login">로그인</button><button type="button" class="auth-tab" data-mode="signup">가입</button></div>
+      <label>학번 <input id="aId" autocomplete="username" required inputmode="numeric" placeholder="예: 23011234"></label>
+      <div id="signupExtra" hidden><label>이름 <input id="aName" placeholder="홍길동"></label></div>
+      <label>비밀번호 <input id="aPw" type="password" autocomplete="current-password" required></label>
+      <div id="signupExtra2" hidden><label class="pw2">비밀번호 확인 <input id="aPw2" type="password" autocomplete="new-password"></label></div>
+      <button id="authSubmit" class="btn primary" type="submit">로그인</button>
+      <div id="authMsg" class="auth-msg"></div>
+      <p class="dim small">비밀번호를 잊었으면 강사에게 초기화(0000)를 요청하세요. <a href="../">처음으로</a></p>
+    </form>
+  </div>
+
+  <div id="app" hidden>
+    <header>
+      <a class="brand" href="../"><span class="logo">✈</span> Drone OJ <small>2일차 · 드론 20대, 충돌 없이 가장 빠르게</small></a>
+      <nav class="vtabs">
+        <button class="vtab" data-view="problem">🧩 문제</button>
+        <button class="vtab active" data-view="code">💻 코드 · 실행</button>
+        <button class="vtab" data-view="board">🏆 스코어보드</button>
+        <button class="vtab" data-view="subs">📜 내 제출</button>
+      </nav>
+      <div class="toolbar">
+        <span id="pyStatus" class="pill loading">Python 로딩 중…</span>
+        <span id="userName" class="user"></span>
+        <button id="btnPw" class="mini">비밀번호 변경</button>
+        <button id="btnLogout" class="mini">로그아웃</button>
+      </div>
+    </header>
+
+    <section id="view-problem" class="page" hidden><div id="problemBody" class="doc"></div></section>
+    <section id="view-board" class="page" hidden><div class="doc"><h2>🏆 스코어보드 <small class="dim">실시간</small></h2><div id="lbBox"></div></div></section>
+    <section id="view-subs" class="page" hidden><div class="doc"><h2>📜 내 제출</h2><div id="subList"></div></div></section>
+
+    <main id="view-code">
+      <div id="layout" class="layout2">
+        <section id="left">
+          <div id="leftTop" class="files-pane">
+            <div class="pane-title"><span>프로젝트</span><span class="spacer"></span>
+              <button id="btnNewFile" class="mini" title="새 파일">＋파일</button>
+              <button id="btnNewFolder" class="mini" title="새 폴더(패키지)">＋폴더</button>
+              <button id="btnRename" class="mini">이름</button>
+              <button id="btnDelete" class="mini">삭제</button>
+              <button id="btnUpload" class="mini" title="파일 업로드">⬆파일</button>
+              <button id="btnUploadDir" class="mini" title="폴더 통째로 업로드">⬆폴더</button>
+              <input id="upFiles" type="file" multiple hidden accept=".py,.txt,.json,.csv,.md">
+              <input id="upDir" type="file" webkitdirectory multiple hidden>
+            </div>
+            <div id="fileTree"></div>
+          </div>
+          <div id="editorPane">
+            <div class="pane-title"><span id="curFile">main.py</span><span id="lintSummary" class="lint-summary"></span><span class="spacer"></span>
+              <span id="saveState" class="save-state"></span>
+              <button id="btnStarter" class="mini">시작 코드로</button><button id="btnDownloadFile" class="mini">⬇ 이 파일</button></div>
+            <div id="editor"></div>
+          </div>
+          <div class="hsplit" id="splitLeft"></div>
+          <div id="consolePane">
+            <div class="pane-title"><span>콘솔</span><span class="hint">stderr 디버그 출력 · 에러 · 채점 메시지</span><span class="spacer"></span><button id="btnClearConsole" class="mini">지우기</button></div>
+            <div id="console"></div>
+          </div>
+        </section>
+        <div class="vsplit" id="splitMain"></div>
+        <section id="right" class="replay-right">
+          <div class="run-bar">
+            <select id="caseSelect"></select>
+            <button id="btnRun" class="btn" disabled title="Ctrl+Enter">▶ 실행</button>
+            <button id="btnSubmit" class="btn primary" disabled title="Ctrl+Shift+Enter">✔ 제출 (5개 케이스)</button>
+            <button id="btnStop" class="btn danger" disabled>■ 중지</button>
+          </div>
+          <div id="viewPane">
+            <div id="view3d"></div>
+            <div id="legend">x · <span style="color:#4cd97b">y</span> · <span style="color:#5aa8ff">z(위)</span> · 격자 1 m · 주황 = 목표점 · 칸 = 착륙장</div>
+            <div id="viewTools">
+              <label class="chk"><input type="checkbox" id="chkPaths" checked> 경로</label>
+              <label class="chk"><input type="checkbox" id="chkLabels" checked> 번호</label>
+            </div>
+          </div>
+          <div id="timeline" hidden>
+            <button id="btnPlay" class="btn">▶</button>
+            <input id="tSlider" type="range" min="0" max="1" step="0.01" value="0">
+            <span id="tLabel" class="mono">t = 0.00 s</span>
+            <select id="speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
+          </div>
+          <div id="resultBox" class="result-box"></div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/lint/lint.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/selection/active-line.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/comment/comment.min.js"></script>
+  <script type="module" src="../js/day2/app.js"></script>
+</body>
+</html>

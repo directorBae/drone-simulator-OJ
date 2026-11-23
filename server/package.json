@@ -1,0 +1,16 @@
+{
+  "name": "drone-oj-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Drone OJ — 1일차 MAVLink 실습 + 2일차 군집 경로 챌린지 서버",
+  "main": "server.js",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node --no-warnings=ExperimentalWarning server.js",
+    "selftest": "node tools/judge-selftest.mjs"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

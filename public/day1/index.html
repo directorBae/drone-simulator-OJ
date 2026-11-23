@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>1일차 · MAVLink 실습 — Drone Lab</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/lint/lint.min.css">
+  <link rel="stylesheet" href="../css/style.css">
+  <script type="importmap">
+  { "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  } }
+  </script>
+</head>
+<body class="day1">
+  <header>
+    <a class="brand" href="../"><span class="logo">✈</span> Drone Lab <small>1일차 · 내 코드로 드론 띄우기</small></a>
+    <div class="toolbar">
+      <select id="exampleSelect" title="예제 · 테스트 코드"></select>
+      <label class="chk">드론 <select id="droneCount"><option value="1">1대</option><option value="2">2대</option><option value="3">3대</option></select></label>
+      <button id="btnRun" class="btn primary" disabled title="Ctrl+Enter">▶ 실행</button>
+      <button id="btnStop" class="btn danger" disabled>■ 중지</button>
+      <button id="btnReset" class="btn" title="드론을 착륙장으로 되돌림">↺ 드론 리셋</button>
+      <span id="pyStatus" class="pill loading">Python 로딩 중…</span>
+    </div>
+  </header>
+
+  <main id="layout">
+    <section id="left">
+      <nav id="leftTabs" class="tabs">
+        <button class="tab active" data-tab="paneCode">🐍 코드 (main.py)</button>
+        <button class="tab" data-tab="paneBuilder">✉ 메시지 작성기</button>
+        <button class="tab" data-tab="paneMission">🎯 미션</button>
+        <span class="spacer"></span><span id="lintSummary" class="lint-summary"></span>
+      </nav>
+      <div id="editorPane">
+        <div id="paneCode" class="tabpane"><div id="editor"></div></div>
+        <div id="paneBuilder" class="tabpane scroll" hidden><div id="builder"></div></div>
+        <div id="paneMission" class="tabpane scroll" hidden>
+          <div class="mission-wrap">
+            <h3>미션: 네 개의 체크포인트</h3>
+            <div id="missionList"></div>
+            <h4>도움말</h4>
+            <ul class="help">
+              <li>연결: <code>m = connect()</code> → <code>m.wait_heartbeat()</code> → <code>m.target_system</code></li>
+              <li>순서: 연결 → <b>GUIDED</b> 모드 → 시동 → 이륙 → 목표 위치 전송 → 착륙</li>
+              <li><b>NED</b>: z 는 아래가 + → 고도 5 m 는 z = −5</li>
+              <li>드론이 꿈쩍 안 하면 <code>COMMAND_ACK</code> 의 result 를 출력해 보세요. 회색 <code>[sim]</code> 로그에 거절 이유가 나옵니다.</li>
+              <li>명령에 반응이 없으면 받은 HEARTBEAT 의 SYSID 로 보내고 있는지 확인하세요.</li>
+              <li>실행 시간 제한: 120초</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="hsplit" id="splitLeft"></div>
+      <div id="consolePane">
+        <div class="pane-title">
+          <span>콘솔</span><span class="hint">print() · 에러 · [sim] 드론 로그</span>
+          <span class="spacer"></span>
+          <label class="chk"><input type="checkbox" id="chkSimLog" checked> [sim] 로그</label>
+          <button id="btnClearConsole" class="mini">지우기</button>
+        </div>
+        <div id="console"></div>
+        <div id="repl"><span class="prompt">&gt;&gt;&gt;</span><input id="replInput" spellcheck="false" autocomplete="off" disabled placeholder="파이썬 한 줄 실행 (실행이 끝난 뒤 m 같은 변수를 그대로 사용 가능)"></div>
+      </div>
+    </section>
+
+    <div class="vsplit" id="splitMain"></div>
+
+    <section id="right" class="with-link">
+      <div id="viewPane">
+        <div id="view3d"></div>
+        <div id="hud">
+          <div class="hud-row"><select id="hudDrone" hidden></select><span id="hudMode" class="mode">STABILIZE</span><span id="hudArmed" class="badge off">DISARMED</span><span id="hudLed" class="led-dot" title="LED"></span></div>
+          <div class="hud-grid">
+            <span>상태</span><b id="hudSys" class="dim"></b>
+            <span>고도</span><b id="hudAlt">0.0 m</b>
+            <span>속도</span><b id="hudSpd">0.0 m/s</b>
+            <span>방위</span><b id="hudHdg">000°</b>
+            <span>로컬 NED</span><b id="hudNed">0, 0, 0</b>
+            <span>배터리</span><b id="hudBat">100%</b>
+          </div>
+        </div>
+        <div id="viewTools">
+          <label class="chk"><input type="checkbox" id="chkFollow" checked> 따라가기</label>
+          <button id="btnView" class="mini">시점 초기화</button>
+          <button id="btnTrail" class="mini">궤적 지우기</button>
+        </div>
+        <div id="toast"></div>
+        <div id="legend">NED · <span style="color:#ff5a5a">N(+x)</span> · <span style="color:#4cd97b">E(+y)</span> · <span style="color:#5aa8ff">위(−z)</span> · 격자 1 m · <span style="color:#ffa23a">●</span> 업링크 <span style="color:#4ea1ff">●</span> 다운링크</div>
+      </div>
+      <div id="linkviz"></div>
+      <div class="hsplit" id="splitRight"></div>
+      <div id="inspectorPane">
+        <div class="pane-title">
+          <span>MAVLink 인스펙터</span>
+          <label class="chk"><input type="checkbox" id="fTX" checked> TX (보낸 것)</label>
+          <label class="chk"><input type="checkbox" id="fRX" checked> RX (드론 응답)</label>
+          <label class="chk"><input type="checkbox" id="fTelem"> 텔레메트리 포함</label>
+          <span class="spacer"></span><button id="btnClearInsp" class="mini">지우기</button>
+        </div>
+        <div id="inspector"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/lint/lint.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/selection/active-line.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/comment/comment.min.js"></script>
+  <script src="../js/core/mavlink.js"></script>
+  <script type="module" src="../js/day1/app.js"></script>
+</body>
+</html>
