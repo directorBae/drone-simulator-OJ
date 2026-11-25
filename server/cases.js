@@ -2,7 +2,8 @@
 //  - 미션: 착륙장(PAD)의 드론 20대로 목표 모양을 만들고(동시에 hold 초) 다시 착륙장으로 복귀
 //  - i번 드론은 starts[i](= 착륙장 i번 자리)에서 출발 → targets[i] → starts[i] (할당 고정)
 //  - public: 학생에게 입력을 공개 (▶ 실행으로 브라우저에서 확인 가능)
-//  - graded: 공식 채점(✔ 제출)에 쓰는 케이스 — 공개 2개 + 비공개 3개
+//  - graded: 공식 채점(✔ 제출)에 쓰는 케이스 — 공개 2개 + 비공개 5개 = 7개
+//  - 8 ~ 10: 밀집 비행 — 목표끼리 중심 간 0.4 m (0.3 m 드론의 외곽 간 10 cm)
 //  - 비공개 케이스의 입력은 서버 밖으로 나가지 않음 (채점도 서버에서 실행)
 const N = 20;
 const r3 = (p) => p.map((v) => Math.round(v * 1000) / 1000);
@@ -35,6 +36,18 @@ const blockTargets = PAD.map((_, i) => block[N - 1 - i]);
 // 7. 기둥 쌓기: 착륙장 가운데 위 한 기둥에 0.4 m 간격으로 20대를 쌓음 (순서를 섞어 한 점으로 몰리는 충돌 유도)
 const towerTargets = PAD.map((_, i) => r3([4, 3, 4 + ((i * 7) % N) * 0.4]));
 
+// ---------------------------------------------------------------- 밀집 비행 (목표끼리 중심 간 0.4 m = 외곽 간 10 cm)
+const D = 0.4;
+// 8. (공개 · 연습) 밀집 판: 고도 6 m 의 5 × 4 판. 착륙장 배치를 180° 돌려 배정 → 경로가 한가운데에서 교차
+const sheet = PAD.map(([x, y]) => r3([4 + (x / 2 - 2) * D, 3 + (y / 2 - 1.5) * D, 6]));
+const sheetTargets = PAD.map((_, i) => sheet[N - 1 - i]);
+// 9. (비공개) 밀집 큐브: 5 × 2 × 2 상자. 배정을 섞어 안쪽 · 아래쪽 자리로 가는 길이 서로 막힘
+const cube = Array.from({ length: N }, (_, k) => r3([4 + ((k % 5) - 2) * D, 3 + ((Math.floor(k / 5) % 2) - 0.5) * D, 6 + Math.floor(k / 10) * D]));
+const cubeTargets = PAD.map((_, i) => cube[(i * 7) % N]);
+// 10. (비공개) 밀집 2단 링: 10대씩 두 층(위아래 0.4 m), 반지름 0.82 m (이웃 간 최소 0.4 m). 배정을 섞어 교차
+const ring2 = Array.from({ length: N }, (_, k) => { const a = (2 * Math.PI * (k % 10)) / 10; return r3([4 + 0.82 * Math.cos(a), 3 + 0.82 * Math.sin(a), 6 + Math.floor(k / 10) * D]); });
+const ring2Targets = PAD.map((_, i) => ring2[(i * 3) % N]);
+
 export const CASES = [
   { id: 1, name: '이륙 격자', desc: '착륙장 배치를 1.5배로 넓혀 고도 8 m 로', starts: PAD, targets: grid, public: true, graded: false },
   { id: 2, name: '원형', desc: '반지름 7 m 수평 링 — 경로가 엇갈림', starts: PAD, targets: ring, public: true, graded: true },
@@ -43,6 +56,9 @@ export const CASES = [
   { id: 5, name: '자리 바꾸기', desc: '착륙장 배치를 180° 돌린 자리의 상공으로 (한가운데 정면 충돌 유도)', starts: PAD, targets: swapTargets, public: false, graded: true },
   { id: 6, name: '좁은 형상', desc: '0.45 m 간격 블록, 배치를 뒤집어 교차 (근접 충돌 유도)', starts: PAD, targets: blockTargets, public: false, graded: true },
   { id: 7, name: '기둥 쌓기', desc: '한 기둥에 0.4 m 간격으로 20대 (한 점으로 몰리는 충돌 유도)', starts: PAD, targets: towerTargets, public: false, graded: true },
+  { id: 8, name: '밀집 판', desc: '밀집 비행 · 0.4 m 간격 5 × 4 판, 배치를 뒤집어 한가운데에서 교차', starts: PAD, targets: sheetTargets, public: true, graded: false },
+  { id: 9, name: '밀집 큐브', desc: '밀집 비행 · 0.4 m 간격 5 × 2 × 2 상자 (안쪽 · 아래쪽 자리가 막힘)', starts: PAD, targets: cubeTargets, public: false, graded: true },
+  { id: 10, name: '밀집 2단 링', desc: '밀집 비행 · 0.4 m 간격 두 층 링 (반지름 0.82 m)', starts: PAD, targets: ring2Targets, public: false, graded: true },
 ];
 export const PUBLIC_CASES = CASES.filter((c) => c.public);
 export const GRADED_CASES = CASES.filter((c) => c.graded);

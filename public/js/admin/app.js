@@ -89,7 +89,7 @@ function renderUsers() {
   $('userCount').textContent = `${users.length}명`;
   $('userTable').innerHTML = `<table class="tbl wide"><tr><th>학번</th><th>이름</th><th>가입</th><th>제출</th><th>최고 성공</th><th>최고 기록</th><th>마지막 제출</th><th>코드 저장</th><th></th></tr>` +
     list.map((u) => `<tr><td>${esc(u.student_id)}</td><td>${esc(u.name)}</td><td class="dim">${fmtTime(u.created_at)}</td><td>${u.submissions}</td>
-      <td>${u.best_ac ?? '-'}/5</td><td>${u.best_time != null ? u.best_time.toFixed(2) + ' s' : '-'}</td><td class="dim">${fmtTime(u.last_submit)}</td><td class="dim">${fmtTime(u.project_updated)}</td>
+      <td>${u.best_ac ?? '-'}/${u.graded_total}</td><td>${u.best_time != null ? u.best_time.toFixed(2) + ' s' : '-'}</td><td class="dim">${fmtTime(u.last_submit)}</td><td class="dim">${fmtTime(u.project_updated)}</td>
       <td class="actions"><button class="mini" data-code="${u.id}">코드 보기</button><button class="mini" data-reset="${u.id}">비번 0000</button><button class="mini danger" data-del="${u.id}">삭제</button></td></tr>`).join('') + '</table>';
   const byId = (id) => users.find((u) => u.id === +id);
   $('userTable').querySelectorAll('[data-code]').forEach((b) => (b.onclick = () => openUser(+b.dataset.code)));

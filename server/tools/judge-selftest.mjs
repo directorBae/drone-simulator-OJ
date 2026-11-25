@@ -1,8 +1,8 @@
 // 채점기·케이스 점검: node server/tools/judge-selftest.mjs <풀이 main.py 또는 프로젝트 폴더>
-// 서버와 같은 실행기(sandbox.js)로 7개 케이스(공개 4 + 비공개 3)를 모두 돌려 채점 결과를 보여 줌
+// 서버와 같은 실행기(sandbox.js)로 모든 케이스(공개 · 비공개, 연습용 포함)를 돌려 채점 결과를 보여 줌
 import fs from 'node:fs';
 import path from 'node:path';
-import { CASES, caseInput } from '../cases.js';
+import { CASES, GRADED_CASES, caseInput } from '../cases.js';
 import { runPython } from '../sandbox.js';
 import { judgeCase } from '../../public/js/day2/judge.js';
 
@@ -24,4 +24,4 @@ for (const c of CASES) {
   if (c.graded && r.verdict === 'AC') { pass++; total += r.missionTime; }
   console.log(`case ${c.id} ${c.name} [${tag}]: ${r.verdict} — ${r.message} (계산 ${run.ms}ms)`);
 }
-console.log(`공식 채점 5개 중 ${pass}개 통과 · 시간 합 ${total.toFixed(2)}s`);
+console.log(`공식 채점 ${GRADED_CASES.length}개 중 ${pass}개 통과 · 시간 합 ${total.toFixed(2)}s`);

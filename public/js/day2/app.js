@@ -95,7 +95,7 @@ async function start(user) {
   events({ leaderboard: lbSoon, judged: subsSoon, config: (c) => { cfg = c; renderDeadline(); lbSoon(); } },
     { onResume: () => { loadLeaderboard(); loadSubmissions(); api('/api/config').then((c) => { cfg = c; renderDeadline(); }).catch(() => {}); } });
   renderDeadline();
-  con.sys(`2일차 군집 경로 챌린지 — ${user.name}님 환영합니다. 공개 케이스 4개를 ▶ 실행으로 확인하고, ✔ 제출로 공식 채점(공개 2 + 비공개 3)을 받으세요.`);
+  con.sys(`2일차 군집 경로 챌린지 — ${user.name}님 환영합니다. 공개 케이스 ${casesInfo.cases.length}개를 ▶ 실행으로 확인하고, ✔ 제출로 공식 채점(${gradedText()})을 받으세요.`);
 }
 
 // ---------------------------------------------------------------------- 파일 · 편집기 · 저장
@@ -248,7 +248,13 @@ function onTime(t, dur) {
 }
 
 // ---------------------------------------------------------------------- 제출
-// 코드를 서버로 보내면 서버가 채점 케이스 5개(공개 2 + 비공개 3)를 직접 실행·채점 → 결과 화면으로 이동
+/** '공개 2 + 비공개 5' — 공식 채점 케이스 구성 (서버의 케이스 정보에서 계산) */
+function gradedText(unit = '') {
+  const pub = casesInfo.cases.filter((c) => c.graded).length;
+  return `공개 ${pub}${unit}${unit ? '(★)' : ''} + 비공개 ${casesInfo.graded.length - pub}${unit}`;
+}
+
+// 코드를 서버로 보내면 서버가 채점 케이스(공개 ★ + 비공개)를 직접 실행·채점 → 결과 화면으로 이동
 async function submit() {
   if (busy) return;
   if (cfg && cfg.deadlinePassed) { alert('제출이 마감되었습니다'); return; }
@@ -408,7 +414,7 @@ function renderProblem() {
 ]}</pre>
   <p class="dim">stdout 에는 JSON 만 출력하세요. 디버그 출력은 <code>print(..., file=sys.stderr)</code>. (마지막 줄이 JSON 이면 앞의 출력은 무시합니다)</p>
   <h3>테스트 케이스</h3>
-  <p>공개 케이스 4개는 입력을 받아 <b>▶ 실행</b>으로 브라우저에서 바로 확인·3D 재생할 수 있습니다. <b>✔ 제출</b>하면 서버가 내 코드를 직접 실행해 <b>공개 2개(★) + 비공개 3개</b>로 공식 채점합니다. 비공개 케이스는 충돌을 일으키기 쉬운 상황(예: 서로 자리 바꾸기, 좁은 곳에 모이기)이며 입력은 공개되지 않습니다.</p>
+  <p>공개 케이스 ${casesInfo.cases.length}개는 입력을 받아 <b>▶ 실행</b>으로 브라우저에서 바로 확인·3D 재생할 수 있습니다. <b>✔ 제출</b>하면 서버가 내 코드를 직접 실행해 <b>${gradedText('개')}</b>로 공식 채점합니다. 비공개 케이스는 충돌을 일으키기 쉬운 상황(예: 서로 자리 바꾸기, 좁은 곳에 모이기, 외곽 간 10 cm 밀집 비행)이며 입력은 공개되지 않습니다. 밀집 비행 케이스는 목표끼리 중심 간 0.4 m(드론 외곽 간 10 cm)로 붙어 있어 출발 시각만 바꿔서는 피하기 어렵습니다.</p>
   <table class="tbl"><tr><th>#</th><th>이름</th><th>설명</th><th>공식 채점</th><th></th></tr>
   ${casesInfo.cases.map((c) => `<tr><td>${c.id}</td><td>${esc(c.name)}</td><td>${esc(c.desc)}</td><td>${c.graded ? '★ 포함' : '<span class="dim">연습용</span>'}</td><td><button class="mini" data-preview="${c.id}">3D 로 보기</button> <button class="mini" data-dl="${c.id}">입력 JSON 받기</button></td></tr>`).join('')}
   ${G.filter((c) => c.hidden).map((c) => `<tr><td>🔒</td><td>${esc(c.name)}</td><td class="dim">채점할 때 서버에서만 실행</td><td>★ 포함</td><td></td></tr>`).join('')}</table>
@@ -416,12 +422,12 @@ function renderProblem() {
   <table class="tbl"><tr><th>결과</th><th>의미</th></tr>
   <tr><td><span class="vchip v-AC">성공</span></td><td>충돌 없이 대형 완성 후 모두 복귀 · 미션 시간 기록</td></tr>
   <tr><td><span class="vchip v-COL">충돌</span></td><td>드론 i 와 j 가 시각 t 에 충돌 → 그 케이스 실패</td></tr>
-  <tr><td><span class="vchip v-CE">컴파일 에러</span></td><td>코드에 문법 오류 → 5개 케이스 모두 실패</td></tr>
+  <tr><td><span class="vchip v-CE">컴파일 에러</span></td><td>코드에 문법 오류 → ${G.length}개 케이스 모두 실패</td></tr>
   <tr><td><span class="vchip v-TLE">시간 초과</span></td><td>경로 계산이 케이스당 ${CPU_LIMIT_SEC}초를 넘음</td></tr>
   <tr><td><span class="vchip v-RE">런타임 에러</span></td><td>실행 중 예외 발생 (비공개 케이스는 에러 종류와 줄 번호만 표시)</td></tr>
   <tr><td><span class="vchip v-RV">규칙 위반</span></td><td>속도 초과 · 대형 미완성 · 미복귀 · 영역 이탈 · 형식 오류</td></tr></table>
   <h3>순위</h3>
-  <ul><li>① <b>통과한 케이스 수</b>가 많은 순 — 5개 통과는 4개 통과보다 항상 위</li><li>② 통과 수가 같으면 <b>통과한 케이스의 미션 시간 합</b>이 작은 순</li><li>③ 그래도 같으면 먼저 제출한 순 · 내 제출 중 가장 좋은 기록으로 계산</li><li>2일차 공개 시각 이후에 낸 제출만 스코어보드에 들어갑니다</li>
+  <ul><li>① <b>통과한 케이스 수</b>가 많은 순 — ${G.length}개 통과는 ${G.length - 1}개 통과보다 항상 위</li><li>② 통과 수가 같으면 <b>통과한 케이스의 미션 시간 합</b>이 작은 순</li><li>③ 그래도 같으면 먼저 제출한 순 · 내 제출 중 가장 좋은 기록으로 계산</li><li>2일차 공개 시각 이후에 낸 제출만 스코어보드에 들어갑니다</li>
   <li id="deadlineLi"></li></ul>
   <h3>프로그램 구조</h3>
   <p>시작 코드의 <code>main.py</code> 에서 <b><code>plan(problem)</code> 함수만 채우면</b> 됩니다 (<code>main()</code> 이 입력을 읽고 결과 JSON 을 출력합니다). 필요하면 파일·폴더를 더 만들어 <code>from mymodule import f</code> 처럼 import 할 수 있습니다. 표준 라이브러리만 쓸 수 있고, 코드는 서버에 자동 저장됩니다.</p>`;

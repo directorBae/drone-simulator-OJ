@@ -1,7 +1,7 @@
 """
 [관리자 테스트 코드] 전부 성공 · 빠름 — 우선순위 계획
-  가는 길 · 돌아오는 길을 먼 드론부터 한 대씩: 직선이 막히면 출발을 늦추거나 위로 돌아감.
-  예상 결과: 5/5 통과 · 시간 합 257.37 s
+  가는 길 · 돌아오는 길을 먼 드론부터 한 대씩: 직선이 막히면 출발을 늦추거나 위 · 아래로 돌아감 (밀집 대형 포함).
+  예상 결과: 7/7 통과 · 시간 합 265.61 s
 """
 import sys
 import json
@@ -22,8 +22,9 @@ def plan(problem):
     # ================================================================
 
     # 우선순위 계획: 가는 길과 돌아오는 길을 따로 계획하고, 그 사이에 모두 모여 hold 초 동안 대형 유지
-    #   한 대씩(먼 드론부터) 후보 경로 = ① 직선  ② 고도 h 로 올라가 수평 이동 후 내려오기 (h 여러 개)
+    #   한 대씩(먼 드론부터) 후보 경로 = ① 직선  ② 위로 올라가 수평 이동 후 내려오기  ③ 낮게 수평 이동 후 아래에서 올라가기
     #   후보마다 출발을 0, 0.25, 0.5 … 초 늦춰 보며, 이미 정한 드론들과 충돌하지 않는 것 중 가장 빨리 도착하는 것을 고름
+    #   아직 계획하지 않은 드론은 '출발 자리에 서 있는 장애물'로 봄 (밀집 대형에서 먼저 떠난 드론이 옆 드론을 치지 않도록)
     #   어느 한 대라도 못 찾으면 전체를 고도 분리로 (항상 성공)
     V = v_max * 0.999
     SEP = problem["min_sep"] + 0.02
@@ -76,10 +77,13 @@ def plan(problem):
 
     def candidates(s, g):
         yield [s, g]
-        top = max(s[2], g[2])
+        top, low = max(s[2], g[2]), min(s[2], g[2])
         for dh in (1.0, 2.0, 3.0, 4.5, 6.0, 8.0):
-            h = top + dh
+            h = top + dh                                   # 위로 넘어가기
             yield [s, [s[0], s[1], h], [g[0], g[1], h], g]
+            h = low + dh * 0.5                             # 아래로 지나가기 (밀집 대형의 아래층 자리)
+            if h < top - 0.5:
+                yield [s, [s[0], s[1], h], [g[0], g[1], h], g]
 
     def prioritized(src, dst):
         """src[i] → dst[i] 를 모두 t=0 에 출발한다고 보고 계획. 실패하면 None"""
@@ -92,7 +96,7 @@ def plan(problem):
                     p = timed(pts, delay)
                     if best is not None and p[-1][0] >= best[-1][0]:
                         break
-                    if all(not collide(p, q) for q in done.values()):
+                    if all(not collide(p, q) for q in done.values()) and all(not collide(p, [[0.0, *src[j]]]) for j in range(n) if j != i and j not in done):
                         best = p
                         break
                     delay += 0.25

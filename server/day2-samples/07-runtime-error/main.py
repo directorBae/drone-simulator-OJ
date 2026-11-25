@@ -1,7 +1,7 @@
 """
 [관리자 테스트 코드] 런타임 에러 — 입력 키 오타
   problem['targets'] 대신 problem['target'] 을 읽음.
-  예상 결과: 5개 모두 런타임 에러 (KeyError: 'target')
+  예상 결과: 7개 모두 런타임 에러 (KeyError: 'target')
 """
 import sys
 import json

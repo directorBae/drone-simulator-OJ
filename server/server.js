@@ -203,7 +203,7 @@ app.get('/api/day1/solutions', (req, res) => {
 });
 
 // ---- 2일차: 문제 · 프로젝트
-// 학생에게는 공개 케이스 4개의 입력과, 채점 케이스 5개의 이름(비공개는 번호만)만 줌
+// 학생에게는 공개 케이스(PUBLIC_CASES)의 입력과, 채점 케이스(GRADED_CASES)의 이름(비공개는 번호만)만 줌
 app.get('/api/day2/cases', (req, res) => {
   if (!day2Allowed(req)) return err(res, 403, '아직 공개되지 않았습니다');
   res.json({
@@ -226,7 +226,7 @@ app.put('/api/day2/project', requireUser, (req, res) => {
   res.json({ ok: true, updatedAt: t });
 });
 
-// ---- 2일차: 제출 — 코드를 받아 서버에서 채점 케이스 5개(공개 2 + 비공개 3)를 실행·채점
+// ---- 2일차: 제출 — 코드를 받아 서버에서 채점 케이스 7개(공개 2 + 비공개 5)를 실행·채점
 app.post('/api/day2/submissions', requireUser, (req, res) => {
   const cfg = config();
   if (!cfg.day2Open && !req.isAdmin) return err(res, 403, '아직 공개되지 않았습니다');
@@ -369,7 +369,7 @@ app.get('/api/admin/users', requireAdmin, (req, res) => {
       (SELECT MAX(created_at) FROM submissions s WHERE s.user_id = u.id) AS last_submit,
       (SELECT updated_at FROM projects p WHERE p.user_id = u.id) AS project_updated
     FROM users u ORDER BY u.student_id`).all();
-  res.json(rows);
+  res.json(rows.map((r) => ({ ...r, graded_total: GRADED_CASES.length })));
 });
 app.get('/api/admin/users/:id', requireAdmin, (req, res) => {
   const u = db.prepare('SELECT id, student_id, name, created_at FROM users WHERE id = ?').get(+req.params.id);
