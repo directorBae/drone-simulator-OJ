@@ -1,0 +1,70 @@
+"""
+[관리자 테스트 코드] 시간 초과 — 0.0001초 간격 전수 검사
+  경로는 맞지만 충돌 확인을 너무 촘촘히 직접 해서 느림.
+  예상 결과: 5개 모두 시간 초과 (제출 하나에 케이스당 제한 시간 × 5 만큼 걸림)
+"""
+import sys
+import json
+import math
+
+
+def plan(problem):
+    """시작 코드와 같은 구조: 입력(problem)을 받아 드론마다 웨이포인트 [[t, x, y, z], ...] 를 돌려줌"""
+    v_max = problem["v_max"]
+    starts = problem["starts"]
+    targets = problem["targets"]
+    paths = []
+
+    # ================================================================
+    # 여기에 코드를 작성하세요  ← 이 예시에서는 아래가 그 부분
+    # ================================================================
+
+    # 고도 분리: 드론마다 다른 고도 층 → 상승 · 수평 이동 · 하강을 모두 같은 박자로
+    GAP = 0.5                                     # 층 사이 간격 (m)
+    v = v_max * 0.999                             # 실제로 쓸 속력
+    n = len(starts)
+    order = sorted(range(n), key=lambda i: targets[i][2])   # 목표가 낮을수록 낮은 층
+    top = max(max(p[2] for p in starts), max(p[2] for p in targets))
+    layer = [0.0] * n
+    for rank, i in enumerate(order):
+        layer[i] = top + 1 + GAP * rank
+
+    def stage_time(dists):
+        return max(max(dists) / v, 1e-3)
+
+    T1 = stage_time([abs(layer[i] - starts[i][2]) for i in range(n)])
+    T2 = stage_time([math.hypot(targets[i][0] - starts[i][0], targets[i][1] - starts[i][1]) for i in range(n)])
+    T3 = stage_time([abs(layer[i] - targets[i][2]) for i in range(n)])
+    for i in range(n):
+        s, g, h = starts[i], targets[i], layer[i]
+        paths.append([[0, *s], [T1, s[0], s[1], h], [T1 + T2, g[0], g[1], h], [T1 + T2 + T3, *g]])
+
+    # ↓ 이 부분이 너무 느림: 충돌이 없는지 0.0001초마다 190쌍을 직접 확인 → (미션 시간 / 0.0001) × 190 번 계산
+    def pos(p, t):
+        for a, b in zip(p, p[1:]):
+            if a[0] <= t <= b[0]:
+                u = (t - a[0]) / (b[0] - a[0])
+                return [a[k] + (b[k] - a[k]) * u for k in (1, 2, 3)]
+        return p[-1][1:]
+
+    end = max(p[-1][0] for p in paths)
+    t = 0.0
+    while t <= end:
+        P = [pos(p, t) for p in paths]
+        for i in range(n):
+            for j in range(i + 1, n):
+                if max(abs(P[i][k] - P[j][k]) for k in range(3)) < problem["min_sep"]:
+                    print("충돌 발견!", i, j, t, file=sys.stderr)
+        t += 0.0001
+
+    return paths
+
+
+def main():
+    problem = json.load(sys.stdin)            # 입력 JSON 읽기 — 수정하지 마세요
+    paths = plan(problem)
+    print(json.dumps({"paths": paths}))       # 결과 JSON 출력 — 수정하지 마세요
+
+
+if __name__ == "__main__":
+    main()

@@ -1,157 +1,59 @@
-// 2일차 시작 프로젝트 (여러 파일 · 패키지 구조)
+// 2일차 시작 코드: main() 은 입출력만, 학생은 plan() 을 채움 (필요하면 파일 · 폴더를 더 만들어 import 해도 됨)
 export const STARTER = {
   'main.py': String.raw`"""
 2일차 챌린지: 드론 20대, 충돌 없이 가장 빠르게
 
-  i번 드론: starts[i] 에서 출발 → targets[i] 에 도착. 어떤 두 드론도 부딪히면 안 됨.
-  입력  (stdin) : {"v_max", "starts": [[x,y,z]×20], "targets": [[x,y,z]×20], "min_sep", "tol"}
-  출력 (stdout) : {"paths": [ [[t, x, y, z], ...] × 20 ]}   ← 미리 계산한 웨이포인트
+  할 일: plan() 을 완성해 드론마다 웨이포인트 [t, x, y, z] 목록을 만드세요.
+         입력을 읽고 결과 JSON 을 출력하는 부분(main)은 이미 되어 있습니다.
+  규칙 · JSON 형식: 코드 위의 [📋 규칙 · JSON 형식] 탭
 
-  * stdout 에는 JSON 한 줄만! 디버그 출력은 print(..., file=sys.stderr)
-  * 좌표 단위 m, z 는 위가 + (1일차 NED 와 반대)
+  * 디버그 출력은 print(..., file=sys.stderr) — stdout 에는 결과 JSON 만 나가야 합니다
 """
 import sys
 import json
+import math
 
-from planner.problem import Problem
-from planner.solver import Solver
+
+def plan(problem):
+    """
+    problem (입력 JSON 그대로):
+        problem["v_max"]    최고 속력 (m/s)
+        problem["starts"]   [[x, y, z], ...]  i번 드론의 출발점
+        problem["targets"]  [[x, y, z], ...]  i번 드론이 도착해야 할 곳
+        problem["min_sep"]  두 드론의 max(|Δx|, |Δy|, |Δz|) 가 이보다 작아지면 충돌
+        problem["tol"]      도착 허용 오차 (m)
+
+    반환: paths — paths[i] = i번 드론의 웨이포인트 [[t, x, y, z], ...]
+        · 첫 웨이포인트는 [0, 출발점],  마지막 위치는 자기 목표점
+        · t 는 계속 커져야 하고, 웨이포인트 사이 속력은 v_max 이하
+        · 같은 위치를 더 늦은 t 로 한 번 더 적으면 그동안 제자리에서 기다림
+    """
+    v_max = problem["v_max"]
+    starts = problem["starts"]
+    targets = problem["targets"]
+    paths = []
+
+    # ================================================================
+    # TODO: 여기에 코드를 작성하세요
+    #   지금은 형식만 맞는 예시입니다 — 모든 드론이 최고 속도로 목표까지 직선 비행
+    #   → 경로가 엇갈리는 케이스에서는 '충돌' 이 납니다.
+    #   힌트: 드론마다 다른 고도로 올라가 수평 이동 → 내려오기(고도 분리)로 먼저 성공부터,
+    #         그다음 출발 순서 · 기다리기 · 우회 경로로 시간을 줄여 보세요.
+    # ================================================================
+    for start, target in zip(starts, targets):
+        t = math.dist(start, target) / v_max
+        paths.append([[0, *start], [t, *target]])
+
+    return paths
 
 
 def main():
-    problem = Problem.from_json(json.load(sys.stdin))
-    print(f"드론 {problem.n}대, v_max={problem.v_max} m/s", file=sys.stderr)
-    paths = Solver(problem).solve()
-    print(json.dumps({"paths": [p.to_list() for p in paths]}))
+    problem = json.load(sys.stdin)            # 입력 JSON 읽기 — 수정하지 마세요
+    paths = plan(problem)
+    print(json.dumps({"paths": paths}))       # 결과 JSON 출력 — 수정하지 마세요
 
 
 if __name__ == "__main__":
     main()
-`,
-  'planner/__init__.py': String.raw`"""경로 계획 패키지: problem(입력) · geometry(벡터) · path(경로 기록) · solver(알고리즘)"""
-`,
-  'planner/geometry.py': String.raw`from dataclasses import dataclass
-import math
-
-
-@dataclass(frozen=True)
-class Vec3:
-    x: float
-    y: float
-    z: float
-
-    def __add__(self, o):
-        return Vec3(self.x + o.x, self.y + o.y, self.z + o.z)
-
-    def __sub__(self, o):
-        return Vec3(self.x - o.x, self.y - o.y, self.z - o.z)
-
-    def __mul__(self, k):
-        return Vec3(self.x * k, self.y * k, self.z * k)
-
-    def norm(self):
-        return math.sqrt(self.x ** 2 + self.y ** 2 + self.z ** 2)
-
-    def tuple(self):
-        return (self.x, self.y, self.z)
-
-
-def dist(a, b):
-    """유클리드 거리 — 속도 제한은 이 거리로 계산됩니다"""
-    return (a - b).norm()
-
-
-def chebyshev(a, b):
-    """체비쇼프 거리 — 이 값이 min_sep(0.3) 보다 작아지면 충돌"""
-    d = a - b
-    return max(abs(d.x), abs(d.y), abs(d.z))
-`,
-  'planner/problem.py': String.raw`from dataclasses import dataclass, field
-from .geometry import Vec3
-
-
-@dataclass
-class Problem:
-    v_max: float
-    starts: list            # list[Vec3] — i번 드론의 출발점
-    targets: list           # list[Vec3] — i번 드론의 목표점 (할당 고정)
-    min_sep: float = 0.3
-    tol: float = 0.1
-
-    @property
-    def n(self):
-        return len(self.starts)
-
-    @classmethod
-    def from_json(cls, d):
-        return cls(
-            v_max=d["v_max"],
-            starts=[Vec3(*p) for p in d["starts"]],
-            targets=[Vec3(*p) for p in d["targets"]],
-            min_sep=d.get("min_sep", 0.3),
-            tol=d.get("tol", 0.1),
-        )
-`,
-  'planner/path.py': String.raw`from .geometry import Vec3, dist
-
-SAFETY = 0.999   # 반올림 오차로 v_max 를 넘지 않도록 아주 조금 느리게
-
-
-class Path:
-    """한 드론의 시간 웨이포인트 [t, x, y, z] 기록기"""
-
-    def __init__(self, start: Vec3):
-        self.start = start
-        self.points = [(0.0, start)]
-
-    @property
-    def t(self):
-        return self.points[-1][0]
-
-    @property
-    def pos(self):
-        return self.points[-1][1]
-
-    def move_to(self, p: Vec3, speed: float):
-        """현재 위치에서 p 까지 speed(m/s) 로 직선 이동"""
-        d = dist(self.pos, p)
-        if d < 1e-9:
-            return self
-        self.points.append((self.t + d / (speed * SAFETY), p))
-        return self
-
-    def wait(self, seconds: float):
-        """제자리에서 seconds 초 대기"""
-        if seconds > 0:
-            self.points.append((self.t + seconds, self.pos))
-        return self
-
-    def wait_until(self, t: float):
-        return self.wait(t - self.t)
-
-    def to_list(self):
-        return [[round(t, 4), round(p.x, 4), round(p.y, 4), round(p.z, 4)] for t, p in self.points]
-`,
-  'planner/solver.py': String.raw`from .geometry import Vec3, dist, chebyshev
-from .path import Path
-
-
-class Solver:
-    def __init__(self, problem):
-        self.p = problem
-
-    def solve(self):
-        P = self.p
-        paths = [Path(s) for s in P.starts]
-
-        # TODO 충돌 없이 모든 드론을 자기 목표(targets[i])까지 — 그리고 되도록 빨리
-        #   힌트 1) 먼저 '성공'부터: 드론마다 다른 고도로 올라가 수평 이동 → 내려오기 (고도 분리)
-        #   힌트 2) 시간 줄이기: 출발 순서 · 대기(wait) · 속도 조절 · 우회 경로 · 우선순위 계획 …
-        #   힌트 3) 비공개 케이스는 자리바꾸기 · 좁은 곳에 모이기처럼 충돌이 잘 나는 상황입니다.
-        #
-        # 아래는 형식만 맞는 예시입니다: 모두 최고 속도로 목표까지 직선
-        #   → 대부분의 케이스에서 '충돌' 이 나옵니다.
-        for path, goal in zip(paths, P.targets):
-            path.move_to(goal, P.v_max)
-        return paths
 `,
 };

@@ -8,7 +8,7 @@ import { renderLeaderboard } from './lb.js';
 
 let CPU_LIMIT_SEC = 30; // 케이스당 계산 시간 제한 (서버 설정을 받아 씀)
 const con = new Console($('console'));
-let me = null, cfg = null, casesInfo = null;
+let me = null, cfg = null, casesInfo = null, isAdmin = false;
 let files = null, saveTimer = null, dirty = false;
 let busy = false;
 let editor, tree, runner, scene;
@@ -20,6 +20,7 @@ async function boot() {
   runner = new Runner({ sim: null, onStatus: (cls, text) => setPill($('pyStatus'), cls, text), onMessage: onRunner });
   cfg = await api('/api/config').catch(() => null);
   const r = await api('/api/auth/me').catch(() => ({}));
+  isAdmin = !!r.admin;
   if (r.user) start(r.user); else showAuth();
 }
 
@@ -65,6 +66,7 @@ async function start(user) {
   casesInfo = await api('/api/day2/cases');
   CPU_LIMIT_SEC = casesInfo.timeLimitSec || CPU_LIMIT_SEC;
   renderProblem();
+  renderRules();
 
   // 프로젝트
   const proj = await api('/api/day2/project').catch(() => ({ files: null }));
@@ -86,9 +88,11 @@ async function start(user) {
   previewCase(+sel.value);
 
   wireUi();
+  if (isAdmin) setupAdminSamples();
   loadSubmissions();
   loadLeaderboard();
-  events({ leaderboard: () => loadLeaderboard(), judged: () => loadSubmissions(), config: (c) => { cfg = c; renderDeadline(); loadLeaderboard(); } });
+  events({ leaderboard: () => loadLeaderboard(), judged: () => loadSubmissions(), config: (c) => { cfg = c; renderDeadline(); loadLeaderboard(); } },
+    { onResume: () => { loadLeaderboard(); loadSubmissions(); api('/api/config').then((c) => { cfg = c; renderDeadline(); }).catch(() => {}); } });
   renderDeadline();
   con.sys(`2일차 군집 경로 챌린지 — ${user.name}님 환영합니다. 공개 케이스 4개를 ▶ 실행으로 확인하고, ✔ 제출로 공식 채점(공개 2 + 비공개 3)을 받으세요.`);
 }
@@ -96,6 +100,7 @@ async function start(user) {
 // ---------------------------------------------------------------------- 파일 · 편집기 · 저장
 function openFile(p) {
   if (!(p in files)) return;
+  showEditorTab('code');
   let doc = docs.get(p);
   if (!doc) { doc = CodeMirror.Doc(files[p], p.endsWith('.py') ? { name: 'python', version: 3 } : 'text/plain'); docs.set(p, doc); }
   editor.swapDoc(doc);
@@ -251,6 +256,45 @@ async function submit() {
   }
 }
 
+// ---------------------------------------------------------------------- 관리자 테스트 코드 (관리자만)
+function setupAdminSamples() {
+  const btn = $('btnAdminSamples'), panel = $('samplePanel');
+  btn.hidden = false;
+  let list = null;
+  const close = () => { panel.hidden = true; };
+  btn.onclick = async (e) => {
+    e.stopPropagation();
+    if (!panel.hidden) return close();
+    if (!list) list = await api('/api/admin/day2-samples').catch((ex) => { alert(ex.message); return null; });
+    if (!list) return;
+    panel.innerHTML = `<div class="sp-head">🔧 관리자 테스트 코드 <span class="dim">— 불러오면 지금 프로젝트를 바꿉니다 (이 계정의 코드)</span></div>` +
+      list.map((s) => `<div class="sp-item">
+        <div class="sp-title"><span class="sp-group g-${esc(s.group)}">${esc(s.group)}</span>${esc(s.title)}</div>
+        <div class="sp-expect">예상: ${esc(s.expect)}</div>
+        <div class="dim small">${esc(s.desc)}</div>
+        <div class="sp-actions"><button class="mini" data-load="${esc(s.id)}">불러오기</button><button class="mini primary-mini" data-submit="${esc(s.id)}">불러와서 바로 제출</button></div>
+      </div>`).join('');
+    panel.hidden = false;
+    panel.querySelectorAll('[data-load]').forEach((b) => (b.onclick = () => loadAdminSample(b.dataset.load, false).then(close)));
+    panel.querySelectorAll('[data-submit]').forEach((b) => (b.onclick = () => loadAdminSample(b.dataset.submit, true).then(close)));
+  };
+  document.addEventListener('click', (e) => { if (!panel.hidden && !panel.contains(e.target) && e.target !== btn) close(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+}
+async function loadAdminSample(id, andSubmit) {
+  const s = await api(`/api/admin/day2-samples/${encodeURIComponent(id)}`).catch((ex) => { alert(ex.message); return null; });
+  if (!s) return;
+  for (const k of Object.keys(files)) delete files[k];
+  Object.assign(files, s.files);
+  docs.clear(); tree.setFiles(files); openFile('main.py');
+  switchView('code');
+  con.div(`🔧 테스트 코드: ${s.title}`);
+  con.sys(`예상 결과: ${s.expect} — ▶ 실행으로 공개 케이스를 보거나 ✔ 제출로 공식 채점해 보세요.`);
+  dirty = true;
+  await save();
+  if (andSubmit) submit();
+}
+
 // ---------------------------------------------------------------------- 내 제출 · 리더보드
 async function loadSubmissions() {
   const list = await api('/api/day2/submissions/mine').catch(() => []);
@@ -280,6 +324,46 @@ async function loadLeaderboard() {
   }
   box.innerHTML = renderLeaderboard(lb, { meName: me.name });
 }
+// ---------------------------------------------------------------------- 코드 옆 '규칙 · JSON 형식' 탭
+function showEditorTab(t) {
+  document.querySelectorAll('.etab').forEach((b) => b.classList.toggle('active', b.dataset.etab === t));
+  $('editor').hidden = t !== 'code';
+  $('rulesPane').hidden = t !== 'rules';
+  if (t === 'code' && editor) editor.refresh();
+}
+function renderRules() {
+  const R = casesInfo.rules;
+  const ex = casesInfo.cases[0] && casesInfo.cases[0].input;
+  const s0 = ex ? ex.starts[0] : [0, 0, 0], g0 = ex ? ex.targets[0] : [1, 2, 8];
+  $('rulesPane').innerHTML = `
+    <div class="rp-lead">프로그램이 할 일은 <b>입력 JSON 을 읽어 드론별 웨이포인트 JSON 을 출력</b>하는 것뿐입니다. 채점기는 출력된 JSON 만 검사합니다.</div>
+    <h4>제약 조건</h4>
+    <table class="tbl rp-tbl">
+      <tr><td>최고 속력</td><td><b>v_max = ${R.v_max} m/s</b> — 웨이포인트 사이 직선 거리 ÷ 시간 차가 이보다 크면 안 됨</td></tr>
+      <tr><td>충돌</td><td>두 드론의 max(|Δx|, |Δy|, |Δz|) &lt; <b>${R.min_sep} m</b> 인 순간이 있으면 충돌 (정확히 ${R.min_sep} 은 허용)</td></tr>
+      <tr><td>도착</td><td>i번 드론의 마지막 위치가 <b>targets[i]</b> 에서 ${R.tol} m 이내 — 도착 뒤에는 그 자리에 머묾</td></tr>
+      <tr><td>시간</td><td>t 는 0 에서 시작해 <b>계속 커져야</b> 함 · 미션 시간 = 가장 늦은 마지막 t (작을수록 좋음, 최대 ${MAX_MISSION_TIME} s)</td></tr>
+      <tr><td>영역</td><td>x ${BOUNDS.x.join('~')} · y ${BOUNDS.y.join('~')} · z 0~${BOUNDS.z[1]} (z 는 위가 +)</td></tr>
+      <tr><td>크기</td><td>드론당 웨이포인트 ≤ ${MAX_WAYPOINTS.toLocaleString()}개 · 계산 시간 케이스당 ${CPU_LIMIT_SEC}초</td></tr>
+    </table>
+    <h4>입력 (stdin) — <code>problem</code></h4>
+    <pre class="rp-json">{
+  "v_max": ${R.v_max},
+  "min_sep": ${R.min_sep},
+  "tol": ${R.tol},
+  "starts":  [[${s0.join(', ')}], …],     ← i번 드론의 출발점 (드론 20대)
+  "targets": [[${g0.join(', ')}], …]      ← i번 드론이 가야 할 곳
+}</pre>
+    <h4>출력 (stdout) — <code>plan()</code> 이 돌려준 paths</h4>
+    <pre class="rp-json">{"paths": [
+  [[0, ${s0.join(', ')}], [3.0, ${s0[0]}, ${s0[1]}, 3], [3.5, ${s0[0]}, ${s0[1]}, 3], [12.4, ${g0.join(', ')}]],   ← 드론 0
+  …                                                       ← 드론 1 ~ 19
+]}
+ [t, x, y, z]: t초에 (x, y, z) 에 있음. 사이는 직선 · 일정한 속도로 이동
+ [3.0 …] → [3.5 …] 처럼 같은 위치를 반복하면 그동안 제자리에서 기다림</pre>
+    <p class="dim small">stdout 에는 이 JSON 한 줄만 나가야 합니다. 디버그 출력은 <code>print(..., file=sys.stderr)</code>. 자세한 설명은 위쪽 🧩 문제 탭.</p>`;
+}
+
 // ---------------------------------------------------------------------- 문제 설명
 function renderProblem() {
   const R = casesInfo.rules, G = casesInfo.graded;
@@ -327,7 +411,7 @@ function renderProblem() {
   <ul><li>① <b>통과한 케이스 수</b>가 많은 순 — 5개 통과는 4개 통과보다 항상 위</li><li>② 통과 수가 같으면 <b>통과한 케이스의 미션 시간 합</b>이 작은 순</li><li>③ 그래도 같으면 먼저 제출한 순 · 내 제출 중 가장 좋은 기록으로 계산</li>
   <li id="deadlineLi"></li></ul>
   <h3>프로그램 구조</h3>
-  <p>여러 파일과 폴더로 나눠 작성할 수 있습니다 (왼쪽 파일 탐색기 · 파일/폴더 업로드). 실행은 항상 <code>main.py</code> 에서 시작하고, <code>from planner.solver import Solver</code> 처럼 import 합니다. 표준 라이브러리만 쓸 수 있습니다. 코드는 서버에 자동 저장됩니다.</p>`;
+  <p>시작 코드의 <code>main.py</code> 에서 <b><code>plan(problem)</code> 함수만 채우면</b> 됩니다 (<code>main()</code> 이 입력을 읽고 결과 JSON 을 출력합니다). 필요하면 파일·폴더를 더 만들어 <code>from mymodule import f</code> 처럼 import 할 수 있습니다. 표준 라이브러리만 쓸 수 있고, 코드는 서버에 자동 저장됩니다.</p>`;
   $('problemBody').querySelectorAll('[data-preview]').forEach((b) => (b.onclick = () => { $('caseSelect').value = b.dataset.preview; previewCase(+b.dataset.preview); switchView('code'); }));
   $('problemBody').querySelectorAll('[data-dl]').forEach((b) => (b.onclick = () => {
     const c = casesInfo.cases.find((x) => x.id === +b.dataset.dl);
@@ -358,6 +442,7 @@ function switchView(v) {
 function wireUi() {
   document.querySelectorAll('.vtab').forEach((t) => (t.onclick = () => switchView(t.dataset.view)));
   $('btnRun').onclick = runSelected;
+  document.querySelectorAll('.etab').forEach((b) => (b.onclick = () => showEditorTab(b.dataset.etab)));
   $('btnSubmit').onclick = submit;
   $('btnStop').onclick = stop;
   $('btnNewFile').onclick = () => tree.newFile();

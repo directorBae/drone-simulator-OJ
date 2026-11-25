@@ -18,8 +18,16 @@ const con = new Console($('console'));
 const scene = new Day1Scene($('view3d'));
 const link = new LinkViz($('linkviz'));
 const inspector = new Inspector($('inspector'), () => ({ tx: $('fTX').checked, rx: $('fRX').checked, telem: $('fTelem').checked }));
-const missions = new Missions($('missionList'), () => scene.setMissionMarkers(missions.markers()));
+const missions = new Missions($('missionList'), {
+  onChange: () => { scene.setMissionMarkers(missions.markers()); missionTab(); },
+  onComplete: (it, next) => toast(it.bonus ? `★ 보너스 완료: ${it.desc}` : `✔ 체크포인트 ${it.id} '${it.title}' 완료!${next ? ` 다음: ${next.id}. ${next.title}` : ' 🎉 미션 완료!'}`),
+  onLink: (id) => { showTab('paneDict'); dict.show(id); },
+  onGoCode: () => { showTab('paneCode'); editor.focus(); },
+});
 scene.setMissionMarkers(missions.markers());
+/** 미션 탭 이름에 진행 표시 */
+function missionTab() { const p = missions.progress; $('tabMission').textContent = `🎯 미션 ${p.done}/${p.total}`; }
+missionTab();
 
 let drones = +store.get('drones', '1');
 let running = false, runTimer = null, lastSnap = null;
@@ -151,7 +159,7 @@ async function loadSolutions() {
   renderExamples();
 }
 // 서버 없이 정적 호스팅만 할 때는 해설 없이 동작
-loadSolutions().then(() => events({ config: () => loadSolutions().catch(() => {}) })).catch(() => {});
+loadSolutions().then(() => events({ config: () => loadSolutions().catch(() => {}) }, { onResume: () => loadSolutions().catch(() => {}) })).catch(() => {});
 exSel.onchange = () => {
   const v = exSel.value;
   const ex = v.startsWith('s') ? solutions[+v.slice(1)] : EXAMPLES[+v];
@@ -160,6 +168,7 @@ exSel.onchange = () => {
   if (editor.getValue().trim() && !confirm(`'${ex.title}' 로 바꿀까요? 지금 코드는 사라집니다.`)) return;
   editor.setValue(ex.code);
   store.set('code.v2', ex.code);
+  showTab('paneCode');
   if (ex.drones !== drones) { drones = ex.drones; $('droneCount').value = String(drones); store.set('drones', drones); resetDrones(); }
 };
 $('droneCount').value = String(drones);
@@ -167,16 +176,15 @@ $('droneCount').onchange = (e) => { drones = +e.target.value; store.set('drones'
 link.setDrones(drones);
 
 // ------------------------------------------------------------------ tabs
-document.querySelectorAll('.tab[data-tab]').forEach((t) => {
-  t.onclick = () => {
-    document.querySelectorAll('.tab[data-tab]').forEach((x) => x.classList.toggle('active', x === t));
-    document.querySelectorAll('.tabpane').forEach((p) => { p.hidden = p.id !== t.dataset.tab; });
-    if (t.dataset.tab === 'paneCode') editor.refresh();
-  };
-});
+function showTab(id) {
+  document.querySelectorAll('.tab[data-tab]').forEach((x) => x.classList.toggle('active', x.dataset.tab === id));
+  document.querySelectorAll('.tabpane').forEach((p) => { p.hidden = p.id !== id; });
+  if (id === 'paneCode') editor.refresh();
+}
+document.querySelectorAll('.tab[data-tab]').forEach((t) => { t.onclick = () => showTab(t.dataset.tab); });
 
 // ------------------------------------------------------------------ MAVLink 사전
-new MavDictionary($('dict'));
+const dict = new MavDictionary($('dict'));
 
 // ------------------------------------------------------------------ REPL
 const replHist = [];

@@ -29,7 +29,7 @@ function start() {
   $('clearDeadline').onclick = () => { $('s_deadline').value = ''; };
   $('settingsForm').onsubmit = saveSettings;
   loadSettings();
-  events({ leaderboard: refreshLive, submission: refreshLive, judged: refreshLive, config: () => loadSettings() });
+  events({ leaderboard: refreshLive, submission: refreshLive, judged: refreshLive, config: () => loadSettings() }, { onResume: () => { loadSettings(); refreshLive(); } });
   setInterval(renderStatus, 1000);
 }
 function view(v) {

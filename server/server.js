@@ -23,6 +23,7 @@ import { validFiles } from './validate.js';
 import { Grader, CPU_LIMIT_SEC } from './grader.js';
 import { SANDBOX_INFO } from './sandbox.js';
 import { DAY1_SOLUTIONS } from './day1-solutions.js';
+import { SAMPLES as DAY2_SAMPLES, loadSample } from './day2-samples/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.resolve(__dirname, '../public');
@@ -384,6 +385,13 @@ app.get('/api/admin/submissions', requireAdmin, (req, res) => {
   res.json(rows.map((r) => ({ ...r, results: JSON.parse(r.results) })));
 });
 app.get('/api/admin/leaderboard', requireAdmin, (req, res) => res.json({ cases: lbCases(true), rows: leaderboard(true) }));
+// 2일차 관리자 테스트 코드 (2일차 화면의 '🔧 테스트 코드' 버튼)
+app.get('/api/admin/day2-samples', requireAdmin, (req, res) => res.json(DAY2_SAMPLES));
+app.get('/api/admin/day2-samples/:id', requireAdmin, (req, res) => {
+  const s = loadSample(String(req.params.id));
+  if (!s) return err(res, 404, '없는 테스트 코드입니다');
+  res.json(s);
+});
 app.get('/api/admin/cases', requireAdmin, (req, res) => res.json(CASES.map((c) => ({ id: c.id, name: c.name, desc: c.desc, hidden: !c.public, graded: c.graded, input: caseInput(c) }))));
 
 app.use('/api', (req, res) => err(res, 404, '없는 API 입니다'));

@@ -9,7 +9,7 @@
  */
 const PYODIDE_URL = 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/';
 const PROJ = '/home/pyodide/proj';
-importScripts('mavlink.js', 'sim.js');
+let simEnabled = false; // 1일차(드론 시뮬레이터)일 때만 mavlink.js · sim.js · pymavlink 를 불러옴
 
 let world = null;
 let bootWall = 0;
@@ -190,14 +190,17 @@ async function initPython() {
     pyodide.setStdout({ batched: onStdout });
     pyodide.setStderr({ batched: (s) => postMessage({ type: 'stderr', text: s }) });
     pyodide.setStdin({ stdin: () => { const t = stdinText; stdinText = null; return t; } });
-    pyodide.FS.mkdirTree('/home/pyodide/pymavlink');
     pyodide.FS.mkdirTree(PROJ);
-    for (const f of ['__init__.py', 'mavlink.py', 'mavutil.py']) {
-      const res = await fetch('../../py/pymavlink/' + f, { cache: 'no-cache' });
-      if (!res.ok) throw new Error(`py/pymavlink/${f} 를 불러오지 못했습니다 (${res.status})`);
-      pyodide.FS.writeFile('/home/pyodide/pymavlink/' + f, await res.text());
+    if (simEnabled) {
+      pyodide.FS.mkdirTree('/home/pyodide/pymavlink');
+      const texts = await Promise.all(['__init__.py', 'mavlink.py', 'mavutil.py'].map(async (f) => {
+        const res = await fetch('../../py/pymavlink/' + f);
+        if (!res.ok) throw new Error(`py/pymavlink/${f} 를 불러오지 못했습니다 (${res.status})`);
+        return [f, await res.text()];
+      }));
+      for (const [f, text] of texts) pyodide.FS.writeFile('/home/pyodide/pymavlink/' + f, text);
+      self.MAVLINK_DEFS_JSON = MAVLink.defsJSON;
     }
-    self.MAVLINK_DEFS_JSON = MAVLink.defsJSON;
     pyodide.runPython(SETUP);
     runUser = pyodide.globals.get('_run_user');
     runRepl = pyodide.globals.get('_repl');
@@ -231,6 +234,8 @@ self.onmessage = (e) => {
   const m = e.data;
   switch (m.type) {
     case 'init':
+      simEnabled = !!m.sim;
+      if (simEnabled) importScripts('mavlink.js', 'sim.js');
       resetWorld(m.sim);
       setInterval(() => { if (!busy) { advance(); post(); } }, 20);
       initPython();

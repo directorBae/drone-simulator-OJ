@@ -34,7 +34,7 @@
     events({
       leaderboard: load, config: load,
       submission: (s) => { const t = $('ticker'); t.textContent = `📥 ${s.name} 님 제출 — ${s.passCount === s.total ? `🎉 ${s.total}개 모두 통과!` : `${s.passCount}/${s.total} 통과`}`; t.classList.remove('show'); void t.offsetWidth; t.classList.add('show'); },
-    });
+    }, { onResume: load });
     load();
   </script>
 </body>

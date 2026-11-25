@@ -312,7 +312,7 @@ export class MavDictionary {
       <section class="dx-sec" data-sec><h3>값 표</h3>${TABLES.map(tableCard).join('')}</section>
       <section class="dx-sec" data-sec><h3>그 밖의 메시지</h3>${other.map(msgCard).join('')}</section>
       <section class="dx-sec" data-sec><h3>pymavlink 자주 쓰는 함수</h3>
-        <details class="dx-card" open data-core data-search="${esc(PYMAV.flat().join(' ').toLowerCase())} pymavlink 함수 미션">
+        <details class="dx-card" id="sec-pymav" open data-core data-search="${esc(PYMAV.flat().join(' ').toLowerCase())} pymavlink 함수 미션">
           <summary><span class="dx-name dx-tname">pymavlink (mavutil)</span></summary>
           <div class="dx-body"><table class="dx-tbl dx-pym">${PYMAV.map(([c, d, k]) => `<tr><td class="mono">${k ? '⭐ ' : ''}${esc(c)}</td><td>${esc(d)}</td></tr>`).join('')}</table></div>
         </details>

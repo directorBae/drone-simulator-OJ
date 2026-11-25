@@ -1,6 +1,6 @@
 // 2일차 제출 결과 화면: 서버가 케이스를 하나씩 실행·채점하는 과정을 1초마다 받아 보여 줌
 import { esc } from '../core/ui.js';
-import { api, events, fmtTime } from './api.js';
+import { api, fmtTime } from './api.js';
 import { VERDICT_NAMES } from './judge.js';
 
 const $ = (id) => document.getElementById(id);
@@ -57,7 +57,4 @@ async function poll() {
 }
 
 if (!id) $('sub').textContent = '제출 번호가 없습니다';
-else {
-  poll();
-  events({ progress: (m) => { if (m.id === id) poll(); }, judged: (m) => { if (m.id === id) poll(); } });
-}
+else poll(); // 1초마다 확인 (실시간 알림 연결은 쓰지 않음 — 브라우저 연결 수를 아끼려고)

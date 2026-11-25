@@ -43,19 +43,19 @@
   <main id="layout">
     <section id="left">
       <nav id="leftTabs" class="tabs">
-        <button class="tab active" data-tab="paneCode">🐍 코드 (main.py)</button>
+        <button class="tab active" data-tab="paneMission" id="tabMission">🎯 미션</button>
+        <button class="tab" data-tab="paneCode">🐍 코드 (main.py)</button>
         <button class="tab" data-tab="paneDict">📖 MAVLink 사전</button>
-        <button class="tab" data-tab="paneMission">🎯 미션</button>
         <span class="spacer"></span><span id="lintSummary" class="lint-summary"></span>
       </nav>
       <div id="editorPane">
-        <div id="paneCode" class="tabpane"><div id="editor"></div></div>
+        <div id="paneCode" class="tabpane" hidden><div id="editor"></div></div>
         <div id="paneDict" class="tabpane scroll" hidden><div id="dict"></div></div>
-        <div id="paneMission" class="tabpane scroll" hidden>
+        <div id="paneMission" class="tabpane scroll">
           <div class="mission-wrap">
-            <h3>미션: 네 개의 체크포인트</h3>
+            <h3>미션: 네 개의 체크포인트 <small class="dim">— 하나씩 따라가세요. 코드를 실행하면 자동으로 체크됩니다</small></h3>
             <div id="missionList"></div>
-            <h4>도움말</h4>
+            <h4>공통 도움말</h4>
             <ul class="help">
               <li>연결: <code>m = connect()</code> → <code>m.wait_heartbeat()</code> → <code>m.target_system</code></li>
               <li>순서: 연결 → <b>GUIDED</b> 모드 → 시동 → 이륙 → 목표 위치 전송 → 착륙</li>

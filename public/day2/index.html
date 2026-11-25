@@ -54,6 +54,7 @@
         <button class="vtab" data-view="subs">📜 내 제출</button>
       </nav>
       <div class="toolbar">
+        <button id="btnAdminSamples" class="mini admin-btn" hidden title="관리자만 보임: 미리 준비한 테스트 코드 불러오기">🔧 테스트 코드</button>
         <span id="pyStatus" class="pill loading">Python 로딩 중…</span>
         <span id="userName" class="user"></span>
         <button id="btnPw" class="mini">비밀번호 변경</button>
@@ -61,6 +62,7 @@
       </div>
     </header>
 
+    <div id="samplePanel" class="sample-panel" hidden></div>
     <section id="view-problem" class="page" hidden><div id="problemBody" class="doc"></div></section>
     <section id="view-board" class="page" hidden><div class="doc"><h2>🏆 스코어보드 <small class="dim">실시간</small></h2><div id="lbBox"></div></div></section>
     <section id="view-subs" class="page" hidden><div class="doc"><h2>📜 내 제출</h2><div id="subList"></div></div></section>
@@ -82,10 +84,14 @@
             <div id="fileTree"></div>
           </div>
           <div id="editorPane">
-            <div class="pane-title"><span id="curFile">main.py</span><span id="lintSummary" class="lint-summary"></span><span class="spacer"></span>
+            <div class="pane-title ed-title">
+              <button class="etab active" data-etab="code">💻 <span id="curFile">main.py</span></button>
+              <button class="etab" data-etab="rules">📋 규칙 · JSON 형식</button>
+              <span id="lintSummary" class="lint-summary"></span><span class="spacer"></span>
               <span id="saveState" class="save-state"></span>
               <button id="btnStarter" class="mini">시작 코드로</button><button id="btnDownloadFile" class="mini">⬇ 이 파일</button></div>
             <div id="editor"></div>
+            <div id="rulesPane" class="rules-pane" hidden></div>
           </div>
           <div class="hsplit" id="splitLeft"></div>
           <div id="consolePane">
