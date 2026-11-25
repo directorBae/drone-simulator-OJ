@@ -7,13 +7,17 @@
  *   PORT            (기본 8080)
  *   ADMIN_PASSWORD  관리자 비밀번호 (없으면 시작할 때 무작위로 만들어 콘솔에 출력)
  *   DATA_DIR        SQLite 파일 위치 (기본 ./data)
- *   COOKIE_SECURE=1 HTTPS 로만 쿠키 전송 (HTTPS 뒤에서 운영할 때)
+ *   COOKIE_SECURE=1 항상 HTTPS 로만 쿠키 전송 (지정하지 않아도 HTTPS 로 들어온 요청은 자동으로 Secure)
+ *   HTTPS_PORT      HTTPS 로도 받을 포트 (기본 8443). TLS_CERT_FILE · TLS_KEY_FILE 이 있을 때만 켜짐
+ *   TLS_CERT_FILE / TLS_KEY_FILE  인증서 파일 (Docker 에서는 /certs/origin.pem · /certs/origin.key)
  *   JUDGE_WORKERS   동시에 채점하는 제출 수 (기본: CPU 수 − 1, 최대 4)
  *   JUDGE_TIMEOUT_SEC 케이스당 경로 계산 시간 제한 (기본 30초)
  *   JUDGE_MEM_MB    학생 프로그램 메모리 제한 (기본 1024MB, 리눅스)
  *   SANDBOX_USER    학생 코드를 실행할 사용자 (기본 sandbox, root 로 실행 중일 때만 사용) — sandbox.js 참고
  */
 import express from 'express';
+import fs from 'node:fs';
+import https from 'node:https';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -57,7 +61,8 @@ function cookies(req) {
   return out;
 }
 function setCookie(res, name, value, maxAgeSec) {
-  const secure = process.env.COOKIE_SECURE === '1' ? '; Secure' : '';
+  // Cloudflare 등 HTTPS 로 들어온 요청(req.secure: X-Forwarded-Proto 포함)이면 자동으로 Secure
+  const secure = process.env.COOKIE_SECURE === '1' || (res.req && res.req.secure) ? '; Secure' : '';
   res.append('Set-Cookie', `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSec}${secure}`);
 }
 function session(req) {
@@ -97,7 +102,8 @@ function day2Allowed(req) { return config().day2Open || session(req).admin; }
 // ====================================================================== 실시간 알림 (SSE)
 const clients = new Set();
 app.get('/api/events', (req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+  // no-transform: Cloudflare 같은 프록시가 압축 · 버퍼링하지 않고 바로 흘려보내게
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
   res.write(`event: hello\ndata: ${JSON.stringify(config())}\n\n`);
   clients.add(res);
   req.on('close', () => clients.delete(res));
@@ -144,24 +150,27 @@ app.get('/api/config', (req, res) => res.json({ ...config(), admin: session(req)
 
 // ---- 인증
 const SID_RE = /^[0-9A-Za-z]{4,20}$/;
-app.post('/api/auth/signup', (req, res) => {
+app.post('/api/auth/signup', async (req, res) => {
   const { studentId, name, password } = req.body || {};
   if (!day2Allowed(req)) return err(res, 403, '아직 가입할 수 없습니다');
   if (!SID_RE.test(studentId || '')) return err(res, 400, '학번은 4~20자의 숫자/영문이어야 합니다');
   if (!name || typeof name !== 'string' || name.trim().length < 1 || name.trim().length > 20) return err(res, 400, '이름을 1~20자로 입력하세요');
   if (!password || String(password).length < 4) return err(res, 400, '비밀번호는 4자 이상이어야 합니다');
   if (db.prepare('SELECT 1 FROM users WHERE student_id = ?').get(studentId)) return err(res, 409, '이미 가입된 학번입니다. 비밀번호를 잊었다면 강사에게 초기화를 요청하세요');
-  const r = db.prepare('INSERT INTO users(student_id, name, pw_hash, created_at) VALUES (?, ?, ?, ?)').run(studentId, name.trim(), hashPassword(String(password)), now());
+  const pwHash = await hashPassword(String(password));
+  // 해시를 계산하는 동안 같은 학번이 먼저 가입했을 수 있음 (UNIQUE)
+  if (db.prepare('SELECT 1 FROM users WHERE student_id = ?').get(studentId)) return err(res, 409, '이미 가입된 학번입니다. 비밀번호를 잊었다면 강사에게 초기화를 요청하세요');
+  const r = db.prepare('INSERT INTO users(student_id, name, pw_hash, created_at) VALUES (?, ?, ?, ?)').run(studentId, name.trim(), pwHash, now());
   const token = newToken();
   db.prepare('INSERT INTO sessions(token, user_id, created_at) VALUES (?, ?, ?)').run(token, r.lastInsertRowid, now());
   setCookie(res, 'sid', token, SESSION_DAYS * 86400);
   broadcast('leaderboard');
   res.json({ ok: true, user: { studentId, name: name.trim() } });
 });
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
   const { studentId, password } = req.body || {};
   const u = db.prepare('SELECT * FROM users WHERE student_id = ?').get(String(studentId || ''));
-  if (!u || !checkPassword(String(password || ''), u.pw_hash)) return err(res, 401, '학번 또는 비밀번호가 맞지 않습니다');
+  if (!u || !(await checkPassword(String(password || ''), u.pw_hash))) return err(res, 401, '학번 또는 비밀번호가 맞지 않습니다');
   const token = newToken();
   db.prepare('INSERT INTO sessions(token, user_id, created_at) VALUES (?, ?, ?)').run(token, u.id, now());
   setCookie(res, 'sid', token, SESSION_DAYS * 86400);
@@ -177,12 +186,12 @@ app.get('/api/auth/me', (req, res) => {
   const s = session(req);
   res.json({ user: s.user, admin: s.admin });
 });
-app.post('/api/auth/password', requireUser, (req, res) => {
+app.post('/api/auth/password', requireUser, async (req, res) => {
   const { oldPassword, newPassword } = req.body || {};
   const u = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  if (!checkPassword(String(oldPassword || ''), u.pw_hash)) return err(res, 401, '현재 비밀번호가 맞지 않습니다');
+  if (!(await checkPassword(String(oldPassword || ''), u.pw_hash))) return err(res, 401, '현재 비밀번호가 맞지 않습니다');
   if (!newPassword || String(newPassword).length < 4) return err(res, 400, '새 비밀번호는 4자 이상이어야 합니다');
-  db.prepare('UPDATE users SET pw_hash = ? WHERE id = ?').run(hashPassword(String(newPassword)), u.id);
+  db.prepare('UPDATE users SET pw_hash = ? WHERE id = ?').run(await hashPassword(String(newPassword)), u.id);
   res.json({ ok: true });
 });
 
@@ -367,8 +376,8 @@ app.get('/api/admin/submissions/:id/files', requireAdmin, (req, res) => {
   if (!r) return err(res, 404, '제출을 찾을 수 없습니다');
   res.json({ files: JSON.parse(r.files) });
 });
-app.post('/api/admin/users/:id/reset-password', requireAdmin, (req, res) => {
-  const r = db.prepare('UPDATE users SET pw_hash = ? WHERE id = ?').run(hashPassword('0000'), +req.params.id);
+app.post('/api/admin/users/:id/reset-password', requireAdmin, async (req, res) => {
+  const r = db.prepare('UPDATE users SET pw_hash = ? WHERE id = ?').run(await hashPassword('0000'), +req.params.id);
   if (!r.changes) return err(res, 404, '없는 사용자입니다');
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(+req.params.id);
   res.json({ ok: true });
@@ -404,11 +413,20 @@ app.use((e, req, res, next) => {
   err(res, 500, '서버 오류');
 });
 
+// async 핸들러에서 놓친 예외가 서버 전체를 끄지 않게 (기록만 남김)
+process.on('unhandledRejection', (e) => console.error('처리되지 않은 오류:', e));
+
 // 서버가 다시 시작되면 채점 중이던 제출을 처음부터 다시 채점 (코드는 제출할 때 저장해 둠)
 for (const r of db.prepare("SELECT id FROM submissions WHERE status = 'judging' ORDER BY id").all()) grader.enqueue(r.id);
 
 app.listen(PORT, () => {
   console.log(`Drone OJ 서버: http://localhost:${PORT}`);
+  const cert = process.env.TLS_CERT_FILE, key = process.env.TLS_KEY_FILE;
+  if (cert && key && fs.existsSync(cert) && fs.existsSync(key)) {
+    const HTTPS_PORT = +process.env.HTTPS_PORT || 8443;
+    https.createServer({ cert: fs.readFileSync(cert), key: fs.readFileSync(key) }, app)
+      .listen(HTTPS_PORT, () => console.log(`HTTPS: 포트 ${HTTPS_PORT} (인증서 ${cert})`));
+  }
   if (!process.env.ADMIN_PASSWORD) console.log(`⚠ ADMIN_PASSWORD 가 설정되지 않아 임시 관리자 비밀번호를 만들었습니다: ${ADMIN_PASSWORD}`);
   console.log(`2일차 공개 시각: ${getSettings().day2_open_at} · 동시 채점 ${grader.size}개 · 케이스당 ${CPU_LIMIT_SEC}초`);
   console.log(`학생 코드 실행: ${SANDBOX_INFO}`);

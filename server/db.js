@@ -76,14 +76,16 @@ export function setSetting(key, value) {
 }
 
 // ------------------------------------------------------------------ 비밀번호
-export function hashPassword(pw) {
+// scrypt 는 일부러 느린 계산이라 비동기(libuv 스레드 풀)로 — 수업 시작 때 로그인이 몰려도 서버가 멈추지 않게
+const scrypt = (pw, salt) => new Promise((resolve, reject) => crypto.scrypt(pw, salt, 32, (e, key) => (e ? reject(e) : resolve(key))));
+export async function hashPassword(pw) {
   const salt = crypto.randomBytes(16);
-  return salt.toString('hex') + ':' + crypto.scryptSync(pw, salt, 32).toString('hex');
+  return salt.toString('hex') + ':' + (await scrypt(pw, salt)).toString('hex');
 }
-export function checkPassword(pw, stored) {
+export async function checkPassword(pw, stored) {
   const [salt, hash] = String(stored).split(':');
   if (!salt || !hash) return false;
-  const h = crypto.scryptSync(pw, Buffer.from(salt, 'hex'), 32);
+  const h = await scrypt(pw, Buffer.from(salt, 'hex'));
   return crypto.timingSafeEqual(h, Buffer.from(hash, 'hex'));
 }
 export const now = () => new Date().toISOString();

@@ -8,3 +8,5 @@ data/
 # 서버 접속 키 (AWS EC2 SSH) — 절대 커밋하지 않음
 *.pem
 *.key
+# HTTPS 인증서 (서버의 ./certs)
+certs/
