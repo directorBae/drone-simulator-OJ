@@ -297,10 +297,13 @@ function leaderboard(full) {
 function computeLeaderboard(full) {
   const users = db.prepare('SELECT id, student_id, name FROM users').all();
   const subs = db.prepare("SELECT id, user_id, created_at, results, ac_count, all_ac, total_time FROM submissions WHERE status = 'done' ORDER BY id").all();
+  // 2일차 공개 시각 이후에 낸 제출만 (공개 전 관리자 · 시험용 제출은 순위에서 뺌). 공개 시각을 바꾸면 바로 다시 계산됨
+  const openAt = Date.parse(getSettings().day2_open_at);
   const by = new Map(users.map((u) => [u.id, { u, count: 0, best: null }]));
   for (const s of subs) {
     const e = by.get(s.user_id);
     if (!e) continue;
+    if (Number.isFinite(openAt) && Date.parse(s.created_at) < openAt) continue;
     e.count++;
     if (!e.best || better(s, e.best)) e.best = s;
   }

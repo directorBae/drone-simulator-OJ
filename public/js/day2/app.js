@@ -144,6 +144,13 @@ function setSaveState(state, info) {
   el.textContent = { dirty: '● 수정됨', saving: '☁ 저장 중…', saved: `☁ 서버에 저장됨 ${info ? fmtTime(info) : ''}`, error: `⚠ 저장 실패: ${info || ''} (자동 재시도)` }[state];
 }
 window.addEventListener('beforeunload', (e) => { if (dirty) { save(); e.preventDefault(); e.returnValue = ''; } });
+// 제출하면 버튼을 끈 채로 결과 화면으로 넘어감 → 브라우저 '뒤로 가기' 로 그 상태 그대로 복원되면(bfcache) 버튼을 다시 켬
+window.addEventListener('pageshow', (e) => {
+  if (!e.persisted || !me) return;
+  busy = false;
+  buttons();
+  setPill($('pyStatus'), runner && runner.ready ? 'ready' : 'loading', runner && runner.ready ? '● ' + runner.version : 'Python 로딩 중…');
+});
 
 // ---------------------------------------------------------------------- 실행
 function onRunner(m) {
@@ -414,7 +421,7 @@ function renderProblem() {
   <tr><td><span class="vchip v-RE">런타임 에러</span></td><td>실행 중 예외 발생 (비공개 케이스는 에러 종류와 줄 번호만 표시)</td></tr>
   <tr><td><span class="vchip v-RV">규칙 위반</span></td><td>속도 초과 · 대형 미완성 · 미복귀 · 영역 이탈 · 형식 오류</td></tr></table>
   <h3>순위</h3>
-  <ul><li>① <b>통과한 케이스 수</b>가 많은 순 — 5개 통과는 4개 통과보다 항상 위</li><li>② 통과 수가 같으면 <b>통과한 케이스의 미션 시간 합</b>이 작은 순</li><li>③ 그래도 같으면 먼저 제출한 순 · 내 제출 중 가장 좋은 기록으로 계산</li>
+  <ul><li>① <b>통과한 케이스 수</b>가 많은 순 — 5개 통과는 4개 통과보다 항상 위</li><li>② 통과 수가 같으면 <b>통과한 케이스의 미션 시간 합</b>이 작은 순</li><li>③ 그래도 같으면 먼저 제출한 순 · 내 제출 중 가장 좋은 기록으로 계산</li><li>2일차 공개 시각 이후에 낸 제출만 스코어보드에 들어갑니다</li>
   <li id="deadlineLi"></li></ul>
   <h3>프로그램 구조</h3>
   <p>시작 코드의 <code>main.py</code> 에서 <b><code>plan(problem)</code> 함수만 채우면</b> 됩니다 (<code>main()</code> 이 입력을 읽고 결과 JSON 을 출력합니다). 필요하면 파일·폴더를 더 만들어 <code>from mymodule import f</code> 처럼 import 할 수 있습니다. 표준 라이브러리만 쓸 수 있고, 코드는 서버에 자동 저장됩니다.</p>`;

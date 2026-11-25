@@ -36,6 +36,8 @@ export function events(handlers, { onResume } = {}) {
     else { open(); if (onResume) onResume(); }
   });
   window.addEventListener('pagehide', close);
+  // 브라우저 '뒤로 가기' 로 저장된 페이지가 그대로 복원되면(bfcache) 다시 연결하고 놓친 내용을 불러옴
+  window.addEventListener('pageshow', (e) => { if (e.persisted && !document.hidden) { open(); if (onResume) onResume(); } });
   if (!document.hidden) open();
   return { close };
 }
