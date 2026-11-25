@@ -20,7 +20,7 @@ export const SAMPLES = [
     desc: "직선은 그대로 두고 겹치는 드론의 출발만 늦춤. 넓게 퍼진 대형은 통과하지만 밀집 대형 · 좁은 형상에서는 피할 수 없어 충돌 — 밀집 케이스가 왜 필요한지 보여 주는 예." },
   { id: "05-compile-error", group: "에러", title: "컴파일 에러 — for 문 콜론 빠짐", expect: "7개 모두 컴파일 에러 (main.py 32번째 줄)",
     desc: "02 와 같지만 문법 오류가 하나 있음. 첫 케이스에서 잡혀 나머지는 실행하지 않음." },
-  { id: "06-timeout", group: "에러", title: "시간 초과 — 0.0001초 간격 전수 검사", expect: "7개 모두 시간 초과 (제출 하나에 케이스당 제한 시간 × 7 만큼 걸림)",
+  { id: "06-timeout", group: "에러", title: "시간 초과 — 0.0001초 간격 전수 검사", expect: "7개 모두 시간 초과 (제출 하나에 약 15초 × 7 ≈ 2분)",
     desc: "경로는 맞지만 충돌이 없는지 0.0001초마다 190쌍을 직접 확인하느라 너무 느림." },
   { id: "07-runtime-error", group: "에러", title: "런타임 에러 — 입력 키 오타", expect: "7개 모두 런타임 에러 (KeyError: 'target')",
     desc: "problem['targets'] 대신 problem['target'] 을 읽음." },
