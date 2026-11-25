@@ -2,3 +2,7 @@ server/node_modules
 data
 **/.DS_Store
 .git
+# 비밀 파일은 Docker 빌드에도 넣지 않음
+*.pem
+*.key
+.env

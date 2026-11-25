@@ -5,3 +5,6 @@ data/
 *.db-shm
 .DS_Store
 .env
+# 서버 접속 키 (AWS EC2 SSH) — 절대 커밋하지 않음
+*.pem
+*.key
