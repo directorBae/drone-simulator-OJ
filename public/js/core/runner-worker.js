@@ -4,8 +4,8 @@
  *    Python 이 time.sleep / recv_match 하는 동안에도 브리지 호출마다 시뮬레이션이 진행됨
  *  - 여러 파일/폴더로 된 프로젝트 실행, stdin 입력, stdout 캡처 (2일차 채점용)
  *
- * main → worker : init{sim}, reset{sim}, run{files, entry, stdin, capture}, repl{code}, inject{hex}
- * worker → main : state{snap, events}, stdout{text}, stderr{text}, pystatus, ready, pyerror, started, finished{error, ms, stdout}
+ * main → worker : init{sim}, reset{sim}, run{files, entry, stdin, capture, captureLimit}, repl{code}, inject{hex}
+ * worker → main : state{snap, events}, stdout{text}, stderr{text}, pystatus{text, pct}, ready, pyerror, started, finished{error, ms, stdout}
  */
 const PYODIDE_URL = 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/';
 const PROJ = '/home/pyodide/proj';
@@ -15,7 +15,7 @@ let world = null;
 let bootWall = 0;
 let pyodide = null, runUser = null, runRepl = null;
 let busy = false, lastPost = 0, stdinText = null;
-let capture = null, streamed = 0;
+let capture = null, streamed = 0, captured = 0, captureLimit = Infinity;
 const STREAM_LINES = 400, STREAM_CHARS = 2000;
 
 const nowSec = () => performance.now() / 1000;
@@ -171,7 +171,8 @@ def _repl(src):
 `;
 
 function onStdout(s) {
-  if (capture) capture.push(s);
+  // 채점용 캡처: 한도를 조금 넘는 데서 멈춤 (채점기가 크기 초과로 판정하기에 충분하고, 탭 메모리는 지킴)
+  if (capture && captured <= captureLimit) { capture.push(s); captured += s.length + 1; }
   if (streamed < STREAM_LINES) {
     postMessage({ type: 'stdout', text: s.length > STREAM_CHARS ? s.slice(0, STREAM_CHARS) + ` … (이 줄은 ${s.length}자, 콘솔에는 일부만 표시)` : s });
   } else if (streamed === STREAM_LINES) {
@@ -182,9 +183,10 @@ function onStdout(s) {
 
 async function initPython() {
   try {
-    postMessage({ type: 'pystatus', text: 'Python 다운로드 중…' });
+    postMessage({ type: 'pystatus', text: 'Python 엔진 내려받는 중… (처음 한 번만, 다음부터는 바로 열림)', pct: 30 });
     importScripts(PYODIDE_URL + 'pyodide.js');
     pyodide = await loadPyodide({ indexURL: PYODIDE_URL });
+    postMessage({ type: 'pystatus', text: 'pymavlink · 드론 시뮬레이터 연결 중…', pct: 85 });
     pyodide.setStdout({ batched: onStdout });
     pyodide.setStderr({ batched: (s) => postMessage({ type: 'stderr', text: s }) });
     pyodide.setStdin({ stdin: () => { const t = stdinText; stdinText = null; return t; } });
@@ -243,6 +245,8 @@ self.onmessage = (e) => {
       busy = true;
       stdinText = m.stdin ? (m.stdin.endsWith('\n') ? m.stdin : m.stdin + '\n') : null;
       capture = m.capture ? [] : null;
+      captured = 0;
+      captureLimit = m.captureLimit || Infinity;
       streamed = 0;
       let err = null;
       try { writeProject(m.files); } catch (ex) { err = { kind: 'RE', text: '프로젝트 파일 쓰기 실패: ' + ex }; }

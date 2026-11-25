@@ -25,8 +25,33 @@
         <span class="go" id="day2Go">불러오는 중…</span>
       </a>
     </div>
-    <p class="land-foot"><a href="leaderboard/">🏆 스코어보드</a> · <a href="admin/">관리자</a></p>
+    <!-- 첫 화면이 그려진 뒤 1·2일차에 필요한 무거운 파일(Python 엔진 · 3D · 편집기)을 미리 받아 둠 → js/core/preload.js -->
+    <div id="prep" class="prep" role="status" aria-live="polite">
+      <div class="prep-row"><span id="prepMsg">✈ 드론 시뮬레이터 준비 중…</span><span id="prepPct" class="mono"></span></div>
+      <div class="boot-bar"><i id="prepBar" style="width:0%"></i></div>
+    </div>
+    <p class="land-foot"><a href="leaderboard/">🏆 스코어보드</a></p>
   </main>
+  <script type="module">
+    import { preloadAll } from './js/core/preload.js';
+    const $ = (id) => document.getElementById(id);
+    const mb = (b) => (b / 1e6).toFixed(1);
+    // 화면을 먼저 그린 다음 시작
+    requestAnimationFrame(() => setTimeout(async () => {
+      const failed = await preloadAll((p) => {
+        $('prepBar').style.width = (p.ratio * 100).toFixed(1) + '%';
+        $('prepPct').textContent = `${Math.round(p.ratio * 100)}% · ${mb(p.loaded)} / ${mb(p.total)} MB`;
+      });
+      if (failed.length) {
+        $('prep').classList.add('warn');
+        $('prepMsg').textContent = `⚠ 일부 파일(${failed.length}개)을 미리 받지 못했습니다 — 실습 화면에서 다시 받습니다`;
+      } else {
+        $('prep').classList.add('ok');
+        $('prepMsg').textContent = '✓ 드론 시뮬레이터 준비 완료 — 바로 시작할 수 있습니다';
+        $('prepPct').textContent = '100%';
+      }
+    }, 0));
+  </script>
   <script>
     fetch('api/config').then((r) => r.json()).then((c) => {
       const go = document.getElementById('day2Go'), card = document.getElementById('day2Card');

@@ -3,8 +3,9 @@ export const STARTER = {
   'main.py': String.raw`"""
 2일차 챌린지: 드론 20대, 충돌 없이 가장 빠르게
 
-  입력  (stdin) : {"v_max", "starts": [[x,y,z]×20], "targets": [[x,y,z]×20], "min_sep", "tol", "hold"}
-  출력 (stdout) : {"paths": [ [[t, x, y, z], ...] × 20 ]}
+  i번 드론: starts[i] 에서 출발 → targets[i] 에 도착. 어떤 두 드론도 부딪히면 안 됨.
+  입력  (stdin) : {"v_max", "starts": [[x,y,z]×20], "targets": [[x,y,z]×20], "min_sep", "tol"}
+  출력 (stdout) : {"paths": [ [[t, x, y, z], ...] × 20 ]}   ← 미리 계산한 웨이포인트
 
   * stdout 에는 JSON 한 줄만! 디버그 출력은 print(..., file=sys.stderr)
   * 좌표 단위 m, z 는 위가 + (1일차 NED 와 반대)
@@ -71,11 +72,10 @@ from .geometry import Vec3
 @dataclass
 class Problem:
     v_max: float
-    starts: list            # list[Vec3] — i번 드론의 착륙 지점 (= 시작점 = 복귀점)
-    targets: list           # list[Vec3] — 목표점 (어느 드론이 가도 됨)
+    starts: list            # list[Vec3] — i번 드론의 출발점
+    targets: list           # list[Vec3] — i번 드론의 목표점 (할당 고정)
     min_sep: float = 0.3
     tol: float = 0.1
-    hold: float = 1.0
 
     @property
     def n(self):
@@ -89,7 +89,6 @@ class Problem:
             targets=[Vec3(*p) for p in d["targets"]],
             min_sep=d.get("min_sep", 0.3),
             tol=d.get("tol", 0.1),
-            hold=d.get("hold", 1.0),
         )
 `,
   'planner/path.py': String.raw`from .geometry import Vec3, dist
@@ -140,25 +139,19 @@ class Solver:
     def __init__(self, problem):
         self.p = problem
 
-    def assign(self):
-        """TODO ① 할당: i번 드론 → 몇 번 목표점? (지금은 i → i)
-        힌트: 탐욕(가까운 쌍부터) · 헝가리안 알고리즘"""
-        return list(range(self.p.n))
-
     def solve(self):
         P = self.p
         paths = [Path(s) for s in P.starts]
-        goal = self.assign()
 
-        # TODO ② 경로: 충돌 없이 목표점까지 → 모두 동시에 hold 초 이상 머무르기 → 자기 착륙 지점으로 복귀
-        #   힌트: 고도 분리(드론마다 다른 고도로 이동) 로 먼저 '성공'을 확보한 뒤 시간을 줄여 보세요.
+        # TODO 충돌 없이 모든 드론을 자기 목표(targets[i])까지 — 그리고 되도록 빨리
+        #   힌트 1) 먼저 '성공'부터: 드론마다 다른 고도로 올라가 수평 이동 → 내려오기 (고도 분리)
+        #   힌트 2) 시간 줄이기: 출발 순서 · 대기(wait) · 속도 조절 · 우회 경로 · 우선순위 계획 …
+        #   힌트 3) 비공개 케이스는 자리바꾸기 · 좁은 곳에 모이기처럼 충돌이 잘 나는 상황입니다.
         #
-        # 아래는 형식만 맞는 예시입니다: 모두 2 m 떴다가 그대로 내려옴
-        #   → 채점 결과는 '규칙 위반 (대형 미완성)' 이 나옵니다.
-        for path in paths:
-            path.move_to(path.pos + Vec3(0, 0, 2), P.v_max)
-            path.wait(1.0)
-            path.move_to(path.start, P.v_max)
+        # 아래는 형식만 맞는 예시입니다: 모두 최고 속도로 목표까지 직선
+        #   → 대부분의 케이스에서 '충돌' 이 나옵니다.
+        for path, goal in zip(paths, P.targets):
+            path.move_to(goal, P.v_max)
         return paths
 `,
 };

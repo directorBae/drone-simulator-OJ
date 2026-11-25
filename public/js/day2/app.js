@@ -1,21 +1,23 @@
-import { $, esc, Console, createEditor, Runner, setPill, setupSplitters } from '../core/ui.js';
+import { $, esc, Console, createEditor, Runner, setPill, setupSplitters, bootScreen } from '../core/ui.js';
 import { ReplayScene } from './replay.js';
 import { FileTree } from './files.js';
 import { STARTER } from './starter.js';
-import { judgeCase, VERDICT_NAMES, BOUNDS, MAX_MISSION_TIME } from './judge.js';
+import { judgeCase, VERDICT_NAMES, BOUNDS, MAX_MISSION_TIME, MAX_OUTPUT_CHARS, MAX_WAYPOINTS } from './judge.js';
 import { api, events, fmtTime } from './api.js';
 import { renderLeaderboard } from './lb.js';
 
-const CPU_LIMIT_SEC = 30; // 케이스당 계산 시간 제한
+let CPU_LIMIT_SEC = 30; // 케이스당 계산 시간 제한 (서버 설정을 받아 씀)
 const con = new Console($('console'));
 let me = null, cfg = null, casesInfo = null;
 let files = null, saveTimer = null, dirty = false;
 let busy = false;
-const localResults = {}; // caseId → {input, result}
+let editor, tree, runner, scene;
 
 // ====================================================================== 시작
 boot();
 async function boot() {
+  // 로그인하는 동안 Python 을 미리 내려받아 둠
+  runner = new Runner({ sim: null, onStatus: (cls, text) => setPill($('pyStatus'), cls, text), onMessage: onRunner });
   cfg = await api('/api/config').catch(() => null);
   const r = await api('/api/auth/me').catch(() => ({}));
   if (r.user) start(r.user); else showAuth();
@@ -23,6 +25,7 @@ async function boot() {
 
 // ====================================================================== 인증
 function showAuth() {
+  bootScreen.hold();
   $('auth').hidden = false;
   $('app').hidden = true;
   const tabs = document.querySelectorAll('.auth-tab');
@@ -51,15 +54,16 @@ function showAuth() {
 }
 
 // ====================================================================== 앱
-let editor, tree, runner, scene;
 const docs = new Map();
 
 async function start(user) {
   me = user;
+  bootScreen.show();
   $('auth').hidden = true;
   $('app').hidden = false;
   $('userName').textContent = `${user.name} (${user.studentId})`;
   casesInfo = await api('/api/day2/cases');
+  CPU_LIMIT_SEC = casesInfo.timeLimitSec || CPU_LIMIT_SEC;
   renderProblem();
 
   // 프로젝트
@@ -72,22 +76,21 @@ async function start(user) {
   tree = new FileTree($('fileTree'), files, { onOpen: openFile, onChange: () => { rebuildDocs(); scheduleSave(); } });
   openFile('main.py');
 
-  runner = new Runner({ sim: null, onStatus: (cls, text) => setPill($('pyStatus'), cls, text), onMessage: onRunner });
   scene = new ReplayScene($('view3d'));
   scene.onTime = onTime;
 
   // 케이스 선택
   const sel = $('caseSelect');
-  for (const c of casesInfo.cases.filter((x) => !x.hidden)) sel.add(new Option(`케이스 ${c.id} · ${c.name}`, String(c.id)));
+  for (const c of casesInfo.cases) sel.add(new Option(`케이스 ${c.id} · ${c.name}${c.graded ? ' ★채점' : ''}`, String(c.id)));
   sel.onchange = () => previewCase(+sel.value);
   previewCase(+sel.value);
 
   wireUi();
   loadSubmissions();
   loadLeaderboard();
-  events({ leaderboard: () => loadLeaderboard(), config: (c) => { cfg = c; renderDeadline(); loadLeaderboard(); } });
+  events({ leaderboard: () => loadLeaderboard(), judged: () => loadSubmissions(), config: (c) => { cfg = c; renderDeadline(); loadLeaderboard(); } });
   renderDeadline();
-  con.sys(`2일차 군집 경로 챌린지 — ${user.name}님 환영합니다. 케이스를 골라 ▶ 실행으로 확인하고, ✔ 제출로 5개 케이스 공식 채점을 받으세요.`);
+  con.sys(`2일차 군집 경로 챌린지 — ${user.name}님 환영합니다. 공개 케이스 4개를 ▶ 실행으로 확인하고, ✔ 제출로 공식 채점(공개 2 + 비공개 3)을 받으세요.`);
 }
 
 // ---------------------------------------------------------------------- 파일 · 편집기 · 저장
@@ -149,20 +152,22 @@ async function execute(input) {
   await runner.whenReady();
   let timedOut = false;
   const timer = setTimeout(() => { timedOut = true; runner.restart(null); }, CPU_LIMIT_SEC * 1000);
-  const m = await runner.run({ files, stdin: JSON.stringify(input), capture: true });
+  // 출력은 채점 한도를 조금 넘는 데까지만 받음 → 넘으면 브라우저·서버 채점기 모두 '출력이 너무 큽니다'
+  const m = await runner.run({ files, stdin: JSON.stringify(input), capture: true, captureLimit: MAX_OUTPUT_CHARS + 1 });
   clearTimeout(timer);
   if (timedOut) return { status: 'TLE', ms: CPU_LIMIT_SEC * 1000, error: `계산 시간 제한 ${CPU_LIMIT_SEC}초를 넘었습니다` };
   if (m.error) {
     if (m.error.file && m.error.line) { if (m.error.file !== tree.current && m.error.file in files) tree.open(m.error.file); editor.markError(m.error.line); }
     return { status: m.error.kind === 'CE' ? 'CE' : 'RE', ms: m.ms, error: m.error.text, stdout: m.stdout };
   }
-  return { status: 'ok', ms: m.ms, stdout: m.stdout || '' };
+  const out = m.stdout || '';
+  return { status: 'ok', ms: m.ms, stdout: out.length > MAX_OUTPUT_CHARS ? out.slice(0, MAX_OUTPUT_CHARS + 1) : out };
 }
 
 function buttons() {
   const ready = runner && runner.ready && !busy;
   $('btnRun').disabled = !ready;
-  $('btnSubmit').disabled = !ready || (cfg && cfg.deadlinePassed);
+  $('btnSubmit').disabled = busy || (cfg && cfg.deadlinePassed); // 제출은 서버에서 실행하므로 Python 로딩과 무관
   $('btnStop').disabled = !busy;
 }
 
@@ -186,14 +191,12 @@ async function runSelected() {
   con.line(`계산 ${r.ms < 1000 ? Math.round(r.ms) + ' ms' : (r.ms / 1000).toFixed(2) + ' s'} · 출력 ${(r.stdout.length / 1024).toFixed(1)} KB`, 'c-sys');
   const res = judgeCase(c.input, r.stdout);
   con.line(`${res.verdict === 'AC' ? '✔' : '✖'} [${VERDICT_NAMES[res.verdict]}] ${res.message}`, res.verdict === 'AC' ? 'c-ok' : 'c-err');
-  localResults[id] = { input: c.input, result: res };
   showResult(id, c.input, res);
 }
 function firstLine(s) { const l = String(s || '').trim().split('\n'); return l[l.length - 1]; }
 
 function stop() {
   if (!busy) return;
-  submitAbort = true;
   runner.restart(null);
   con.sys('■ 중지했습니다');
 }
@@ -203,7 +206,7 @@ function previewCase(id) {
   const c = casesInfo.cases.find((x) => x.id === id);
   if (!c || !c.input) return;
   scene.setCase(c.input);
-  $('resultBox').innerHTML = `<div class="dim">케이스 ${id} · ${esc(c.name)} — ${esc(c.desc)}<br>주황 점 = 목표점 (번호), 바닥 칸 = 착륙장 A (드론 번호). ▶ 실행을 누르면 내 경로를 다시 재생합니다.</div>`;
+  $('resultBox').innerHTML = `<div class="dim">케이스 ${id} · ${esc(c.name)}${c.graded ? ' <b>★ 공식 채점에 포함</b>' : ''} — ${esc(c.desc)}<br>파란 칸 = 출발점 (드론 번호), 주황 점 = 목표점 (같은 번호의 드론이 가야 할 곳). ▶ 실행을 누르면 내 경로를 재생합니다.</div>`;
   $('timeline').hidden = true;
 }
 function showResult(id, input, res) {
@@ -232,77 +235,31 @@ function onTime(t, dur) {
 }
 
 // ---------------------------------------------------------------------- 제출
-let submitAbort = false;
+// 코드를 서버로 보내면 서버가 채점 케이스 5개(공개 2 + 비공개 3)를 직접 실행·채점 → 결과 화면으로 이동
 async function submit() {
-  if (busy || !runner.ready) return;
+  if (busy) return;
   if (cfg && cfg.deadlinePassed) { alert('제출이 마감되었습니다'); return; }
-  if (!confirm('5개 테스트 케이스(비공개 포함)로 공식 채점합니다. 제출할까요?')) return;
-  busy = true; submitAbort = false; buttons();
-  await save();
-  editor.clearError();
-  let st;
-  try { st = await api('/api/day2/submit/start', { method: 'POST' }); }
-  catch (e) { alert(e.message); busy = false; buttons(); return; }
-  con.div('✔ 제출 — 5개 케이스 실행 중…');
-  const rows = st.cases.map((c) => ({ caseId: c.id, name: c.name, hidden: c.hidden, state: 'WAIT' }));
-  const render = (official) => {
-    $('resultBox').innerHTML = `<div class="sub-title">${official ? '공식 채점 결과' : '실행 중…'}</div>` + rows.map((r) => `
-      <div class="case-row" data-case="${r.caseId}">
-        <span class="cid">#${r.caseId}</span><span class="cname">${esc(r.name)}${r.hidden ? ' 🔒' : ''}</span>
-        <span class="vchip v-${r.state}">${VERDICT_NAMES[r.state] || (r.state === 'WAIT' ? '대기' : '실행 중')}</span>
-        <span class="ctime">${r.missionTime != null ? r.missionTime.toFixed(2) + ' s' : ''}</span>
-        <div class="cmsg dim">${esc(r.message || '')}</div></div>`).join('') +
-      (official ? `<div class="sub-total">${official.allAc ? `🎉 5개 모두 성공! 미션 시간 합 <b>${official.totalTime.toFixed(2)} s</b>` : `성공 ${official.acCount}/5 — 5개를 모두 성공해야 순위에 오릅니다`}</div>` : '');
-    $('resultBox').querySelectorAll('.case-row').forEach((el) => (el.onclick = () => {
-      const lr = localResults['s' + el.dataset.case];
-      if (lr) showReplayOnly(lr);
-    }));
-  };
-  const payload = [];
-  setPill($('pyStatus'), 'running', '채점 중…');
-  for (let k = 0; k < st.cases.length; k++) {
-    if (submitAbort) break;
-    const c = st.cases[k];
-    rows[k].state = 'RUN'; render();
-    let r;
-    if (k > 0 && payload[0].status === 'CE') r = { status: 'CE', ms: 0, error: payload[0].error };
-    else r = await execute(c.input);
-    if (submitAbort) break;
-    payload.push({ caseId: c.id, status: r.status, stdout: r.stdout || '', ms: Math.round(r.ms), error: r.error });
-    const local = r.status === 'ok' ? judgeCase(c.input, r.stdout) : { verdict: r.status, message: firstLine(r.error) };
-    localResults['s' + c.id] = { input: c.input, result: local, id: c.id };
-    Object.assign(rows[k], { state: local.verdict, missionTime: local.verdict === 'AC' ? local.missionTime : null, message: local.message });
-    render();
-  }
-  if (submitAbort) { busy = false; buttons(); con.sys('제출을 취소했습니다'); return; }
+  busy = true; buttons();
   try {
-    const fin = await api('/api/day2/submit/finish', { method: 'POST', body: { token: st.token, files, results: payload } });
-    fin.results.forEach((r, k) => Object.assign(rows[k], { state: r.verdict, missionTime: r.missionTime, message: r.message }));
-    render(fin);
-    con.line(fin.allAc ? `🎉 제출 #${fin.id}: 5개 모두 성공 — 미션 시간 합 ${fin.totalTime.toFixed(2)}s` : `제출 #${fin.id}: 성공 ${fin.acCount}/5`, fin.allAc ? 'c-ok' : 'c-err');
-    const firstFail = fin.results.find((r) => r.verdict !== 'AC');
-    const lr = localResults['s' + (firstFail ? firstFail.caseId : fin.results[0].caseId)];
-    if (lr && lr.result.paths) showReplayOnly(lr);
-    loadSubmissions();
-  } catch (e) { alert('제출 실패: ' + e.message); }
-  busy = false; buttons();
-  setPill($('pyStatus'), 'ready', '● ' + runner.version);
-}
-function showReplayOnly(lr) {
-  scene.setCase(lr.input);
-  if (lr.result.paths) {
-    scene.setPaths(lr.result.paths, { collision: lr.result.collision || null, highlight: lr.result.drone ?? null });
-    $('timeline').hidden = false;
-    scene.play();
+    await save();
+    const r = await api('/api/day2/submissions', { method: 'POST', body: { files } });
+    dirty = false; // 결과 화면으로 넘어가도 저장 경고가 뜨지 않게 (방금 저장함)
+    location.href = `result/?id=${r.id}`;
+  } catch (e) {
+    alert('제출 실패: ' + e.message);
+    busy = false; buttons();
   }
 }
 
 // ---------------------------------------------------------------------- 내 제출 · 리더보드
 async function loadSubmissions() {
   const list = await api('/api/day2/submissions/mine').catch(() => []);
-  $('subList').innerHTML = list.length ? `<table class="tbl wide"><tr><th>#</th><th>시각</th>${[1, 2, 3, 4, 5].map((i) => `<th>케이스 ${i}</th>`).join('')}<th>합계</th><th></th></tr>` +
-    list.map((s) => `<tr><td>${s.id}</td><td>${fmtTime(s.createdAt)}</td>${s.results.map((r) => `<td title="${esc(r.message || '')}"><span class="vchip v-${r.verdict}">${VERDICT_NAMES[r.verdict]}</span>${r.missionTime != null && r.verdict === 'AC' ? `<br><small>${r.missionTime.toFixed(2)}s</small>` : ''}</td>`).join('')}
-      <td>${s.allAc ? `<b>${s.totalTime.toFixed(2)} s</b>` : `${s.acCount}/5`}</td><td><button class="mini" data-load="${s.id}">코드 불러오기</button></td></tr>`).join('') + '</table>'
+  const G = casesInfo.graded;
+  $('subList').innerHTML = list.length ? `<table class="tbl wide"><tr><th>#</th><th>시각</th>${G.map((c) => `<th>${esc(c.name)}${c.hidden ? ' 🔒' : ''}</th>`).join('')}<th>통과 · 시간 합</th><th></th></tr>` +
+    list.map((s) => `<tr><td><a href="result/?id=${s.id}">${s.id}</a></td><td>${fmtTime(s.createdAt)}</td>${s.status === 'error' ? `<td colspan="${G.length + 1}" class="bad-text">제출 오류: ${esc(s.error || '')}</td>`
+      : `${G.map((c) => { const r = s.results.find((x) => x.caseId === c.id) || {}; const st = r.verdict || r.state || 'WAIT'; return `<td title="${esc(r.message || '')}"><span class="vchip v-${st}">${VERDICT_NAMES[st] || st}</span>${r.verdict === 'AC' ? `<br><small>${r.missionTime.toFixed(2)}s</small>` : ''}</td>`; }).join('')}
+      <td>${s.status === 'judging' ? '<span class="dim">⏳ 채점 중</span>' : `<b>${s.passCount}/${s.total}</b>${s.passCount ? ` · ${s.totalTime.toFixed(2)} s` : ''}`}</td>`}
+      <td><button class="mini" data-load="${s.id}">코드 불러오기</button></td></tr>`).join('') + '</table>'
     : '<p class="dim">아직 제출이 없습니다.</p>';
   $('subList').querySelectorAll('[data-load]').forEach((b) => (b.onclick = async () => {
     if (!confirm(`제출 #${b.dataset.load} 의 코드로 지금 프로젝트를 바꿀까요? (지금 코드는 사라집니다)`)) return;
@@ -325,49 +282,52 @@ async function loadLeaderboard() {
 }
 // ---------------------------------------------------------------------- 문제 설명
 function renderProblem() {
-  const R = casesInfo.rules;
+  const R = casesInfo.rules, G = casesInfo.graded;
   $('problemBody').innerHTML = `
   <h2>드론 20대, 충돌 없이 가장 빠르게</h2>
-  <p>착륙장 A 의 드론 20대로 <b>목표 모양을 만들고</b>, 다시 <b>각자의 착륙 지점으로 돌아오게</b> 하는 경로를 계산하는 프로그램을 작성하세요.</p>
+  <p>드론 20대의 <b>웨이포인트(시각 + 위치)를 미리 계산</b>하는 프로그램을 작성하세요. i번 드론은 <b>자기 출발점</b>에서 출발해 <b>자기 목표점</b>(같은 번호)에 도착해야 하고, 그동안 어떤 두 드론도 부딪히면 안 됩니다.</p>
   <h3>월드</h3>
   <ul><li>드론 20대 · 크기 0.3 × 0.3 × 0.3 m 정육면체 · 위치 = 정육면체 중심</li>
   <li>좌표계: 단위 m · <b>z 는 위가 +</b> (1일차 NED 와 반대 — NED z = −z)</li>
-  <li>착륙장 A: 5 × 4 배치, 2 m 간격, z = 0 · i번 드론 시작점 = (2·(i mod 5), 2·⌊i/5⌋, 0)</li></ul>
+  <li>출발점·목표점은 케이스마다 다릅니다 (입력으로 주어짐)</li></ul>
   <h3>비행 규칙</h3>
   <table class="tbl"><tr><th>규칙</th><th>내용</th></tr>
-  <tr><td>속도 제한</td><td>모든 구간에서 속력 ≤ v_max = <b>${R.v_max} m/s</b> (웨이포인트 사이 직선 거리 ÷ 시간)</td></tr>
-  <tr><td>대형 완성</td><td>20개 목표점이 모두 오차 <b>${R.tol} m</b> 이내로 <b>동시에 ${R.hold} s</b> 이상 채워져야 함</td></tr>
-  <tr><td>목표점 할당</td><td><b>자유</b> — 어느 드론이 어느 목표점에 가도 됨</td></tr>
-  <tr><td>복귀 위치</td><td>각자 <b>출발한 착륙 지점</b> (마지막 웨이포인트 = 시작점, z = 0)</td></tr>
+  <tr><td>할당</td><td><b>고정</b> — i번 드론은 targets[i] 로</td></tr>
+  <tr><td>속도</td><td>모든 구간에서 속력 ≤ v_max = <b>${R.v_max} m/s</b> (웨이포인트 사이 직선 거리 ÷ 시간). 항상 최고 속도로 갈지, 구간마다 속도를 바꾸거나 기다릴지는 자유</td></tr>
+  <tr><td>도착</td><td>마지막 웨이포인트가 자기 목표점에서 <b>${R.tol} m</b> 이내. 도착한 뒤에는 그 자리에 머무름 (계속 충돌 검사 대상)</td></tr>
+  <tr><td>충돌</td><td>max(|Δx|, |Δy|, |Δz|) &lt; <b>${R.min_sep}</b> 이 되는 순간이 있으면 충돌 → 그 케이스는 실패. 웨이포인트 사이를 직선 보간해 <b>연속 시간 전체를 해석적으로</b> 검사합니다.</td></tr>
   <tr><td>비행 영역</td><td>z ≥ 0 · x ${BOUNDS.x.join(' ~ ')} · y ${BOUNDS.y.join(' ~ ')} · z ≤ ${BOUNDS.z[1]} · 미션 시간 ≤ ${MAX_MISSION_TIME} s</td></tr>
-  <tr><td>충돌</td><td>max(|Δx|, |Δy|, |Δz|) &lt; <b>${R.min_sep}</b> 이 되는 순간이 있으면 충돌 (정확히 0.3 은 허용). 웨이포인트 사이를 직선 보간해 <b>연속 시간 전체를 해석적으로</b> 검사합니다. 착륙장에 내려앉은 드론도 검사 대상입니다.</td></tr>
-  <tr><td>기록</td><td>마지막 드론이 착륙한 시각 = 미션 시간</td></tr></table>
+  <tr><td>기록</td><td>마지막 드론이 목표에 도착한 시각 = <b>미션 시간</b></td></tr>
+  <tr><td>계산 시간</td><td>케이스당 <b>${CPU_LIMIT_SEC}초</b> 안에 경로를 출력해야 함 (넘으면 시간 초과)</td></tr></table>
   <h3>입력과 출력</h3>
-  <p><b>입력</b> (표준입력, JSON): <code>{"v_max", "starts": [[x,y,z]×20], "targets": [[x,y,z]×20], "min_sep", "tol", "hold"}</code></p>
+  <p><b>입력</b> (표준입력, JSON): <code>{"v_max", "starts": [[x,y,z]×20], "targets": [[x,y,z]×20], "min_sep", "tol"}</code></p>
   <p><b>출력</b> (표준출력, JSON): <code>{"paths": [ [[t,x,y,z], …] × 20 ]}</code> — i번째 경로가 i번 드론.
-  t 는 0 에서 시작해 <b>엄격히 증가</b>, 첫 웨이포인트 = 자기 착륙 지점 (t=0), 마지막 웨이포인트 = 자기 착륙 지점 (z=0).
-  마지막 웨이포인트 이후에는 그 자리에 머무릅니다.</p>
+  t 는 0 에서 시작해 <b>엄격히 증가</b>, 첫 웨이포인트 = 자기 출발점 (t=0), 마지막 웨이포인트 = 자기 목표점.
+  제자리에서 기다리려면 같은 위치를 더 늦은 t 로 한 번 더 적으면 됩니다.
+  드론당 웨이포인트 ≤ ${MAX_WAYPOINTS.toLocaleString()}개, 케이스당 출력 ≤ ${(MAX_OUTPUT_CHARS / 1e6).toFixed(0)}M자.</p>
   <pre>{"paths": [
-  [[0.0, 0, 0, 0], [2.0, 0, 0, 5], [6.5, 4, 3, 10], …, [30.0, 0, 0, 0]],   # 드론 0
-  …                                                                       # 20개
+  [[0.0, 0, 0, 0], [5.0, 0, 0, 5], [5.8, 0, 0, 5], [12.0, 3, 4, 8]],   # 드론 0: 상승 → 0.8초 대기 → 목표
+  …                                                                 # 20개
 ]}</pre>
   <p class="dim">stdout 에는 JSON 만 출력하세요. 디버그 출력은 <code>print(..., file=sys.stderr)</code>. (마지막 줄이 JSON 이면 앞의 출력은 무시합니다)</p>
+  <h3>테스트 케이스</h3>
+  <p>공개 케이스 4개는 입력을 받아 <b>▶ 실행</b>으로 브라우저에서 바로 확인·3D 재생할 수 있습니다. <b>✔ 제출</b>하면 서버가 내 코드를 직접 실행해 <b>공개 2개(★) + 비공개 3개</b>로 공식 채점합니다. 비공개 케이스는 충돌을 일으키기 쉬운 상황(예: 서로 자리 바꾸기, 좁은 곳에 모이기)이며 입력은 공개되지 않습니다.</p>
+  <table class="tbl"><tr><th>#</th><th>이름</th><th>설명</th><th>공식 채점</th><th></th></tr>
+  ${casesInfo.cases.map((c) => `<tr><td>${c.id}</td><td>${esc(c.name)}</td><td>${esc(c.desc)}</td><td>${c.graded ? '★ 포함' : '<span class="dim">연습용</span>'}</td><td><button class="mini" data-preview="${c.id}">3D 로 보기</button> <button class="mini" data-dl="${c.id}">입력 JSON 받기</button></td></tr>`).join('')}
+  ${G.filter((c) => c.hidden).map((c) => `<tr><td>🔒</td><td>${esc(c.name)}</td><td class="dim">채점할 때 서버에서만 실행</td><td>★ 포함</td><td></td></tr>`).join('')}</table>
   <h3>채점 결과</h3>
   <table class="tbl"><tr><th>결과</th><th>의미</th></tr>
-  <tr><td><span class="vchip v-AC">성공</span></td><td>충돌 없이 대형 완성 후 복귀 · 미션 시간 기록</td></tr>
-  <tr><td><span class="vchip v-COL">충돌 에러</span></td><td>드론 i 와 j 가 시각 t 에 충돌 (번호 · 시각 · 위치 표시, 3D 리플레이에 빨간 상자)</td></tr>
-  <tr><td><span class="vchip v-CE">컴파일 에러</span></td><td>코드에 문법 오류 (파일 · 줄 번호 표시)</td></tr>
-  <tr><td><span class="vchip v-RE">런타임 에러</span></td><td>실행 중 예외 발생</td></tr>
-  <tr><td><span class="vchip v-RV">규칙 위반</span></td><td>속도 초과 · 대형 미완성 · 미복귀 · 영역 이탈 · 형식 오류</td></tr>
-  <tr><td><span class="vchip v-TLE">시간 초과</span></td><td>경로 계산이 케이스당 ${CPU_LIMIT_SEC}초를 넘음</td></tr></table>
-  <h3>테스트 케이스</h3>
-  <table class="tbl"><tr><th>#</th><th>이름</th><th>설명</th><th></th></tr>
-  ${casesInfo.cases.map((c) => `<tr><td>${c.id}</td><td>${esc(c.name)}</td><td>${esc(c.desc)}</td><td>${c.input ? `<button class="mini" data-preview="${c.id}">3D 로 보기</button> <button class="mini" data-dl="${c.id}">입력 JSON 받기</button>` : '🔒 채점 시에만'}</td></tr>`).join('')}</table>
+  <tr><td><span class="vchip v-AC">성공</span></td><td>충돌 없이 모두 도착 · 미션 시간 기록</td></tr>
+  <tr><td><span class="vchip v-COL">충돌</span></td><td>드론 i 와 j 가 시각 t 에 충돌 → 그 케이스 실패</td></tr>
+  <tr><td><span class="vchip v-CE">컴파일 에러</span></td><td>코드에 문법 오류 → 5개 케이스 모두 실패</td></tr>
+  <tr><td><span class="vchip v-TLE">시간 초과</span></td><td>경로 계산이 케이스당 ${CPU_LIMIT_SEC}초를 넘음</td></tr>
+  <tr><td><span class="vchip v-RE">런타임 에러</span></td><td>실행 중 예외 발생 (비공개 케이스는 에러 종류와 줄 번호만 표시)</td></tr>
+  <tr><td><span class="vchip v-RV">규칙 위반</span></td><td>속도 초과 · 목표 미도착 · 영역 이탈 · 형식 오류</td></tr></table>
   <h3>순위</h3>
-  <ul><li>5개 케이스 <b>모두 성공</b>해야 순위에 오릅니다</li><li>점수 = 5개 케이스 <b>미션 시간의 합</b> (작을수록 좋음) · 내 제출 중 가장 좋은 기록</li><li>동점이면 먼저 제출한 순</li>
+  <ul><li>① <b>통과한 케이스 수</b>가 많은 순 — 5개 통과는 4개 통과보다 항상 위</li><li>② 통과 수가 같으면 <b>통과한 케이스의 미션 시간 합</b>이 작은 순</li><li>③ 그래도 같으면 먼저 제출한 순 · 내 제출 중 가장 좋은 기록으로 계산</li>
   <li id="deadlineLi"></li></ul>
   <h3>프로그램 구조</h3>
-  <p>여러 파일과 폴더로 나눠 작성할 수 있습니다 (왼쪽 파일 탐색기 · 파일/폴더 업로드). 실행은 항상 <code>main.py</code> 에서 시작하고, <code>from planner.solver import Solver</code> 처럼 import 합니다. 코드는 서버에 자동 저장됩니다.</p>`;
+  <p>여러 파일과 폴더로 나눠 작성할 수 있습니다 (왼쪽 파일 탐색기 · 파일/폴더 업로드). 실행은 항상 <code>main.py</code> 에서 시작하고, <code>from planner.solver import Solver</code> 처럼 import 합니다. 표준 라이브러리만 쓸 수 있습니다. 코드는 서버에 자동 저장됩니다.</p>`;
   $('problemBody').querySelectorAll('[data-preview]').forEach((b) => (b.onclick = () => { $('caseSelect').value = b.dataset.preview; previewCase(+b.dataset.preview); switchView('code'); }));
   $('problemBody').querySelectorAll('[data-dl]').forEach((b) => (b.onclick = () => {
     const c = casesInfo.cases.find((x) => x.id === +b.dataset.dl);

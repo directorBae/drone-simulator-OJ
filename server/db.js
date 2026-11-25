@@ -50,6 +50,12 @@ db.exec(`
   );
   CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `);
+// 비동기 채점용 열 (예전 DB 에도 추가). status: judging(채점 중) | done(채점 완료) | error(제출 오류)
+{
+  const cols = db.prepare('PRAGMA table_info(submissions)').all().map((c) => c.name);
+  if (!cols.includes('status')) db.exec("ALTER TABLE submissions ADD COLUMN status TEXT NOT NULL DEFAULT 'done'");
+  if (!cols.includes('error')) db.exec('ALTER TABLE submissions ADD COLUMN error TEXT');
+}
 
 // ------------------------------------------------------------------ 설정
 export const DEFAULT_SETTINGS = {
@@ -57,6 +63,7 @@ export const DEFAULT_SETTINGS = {
   leaderboard_open_at: '',                   // 리더보드 자동 공개 시각 (비우면 수동)
   leaderboard_mode: 'auto',                  // auto | open | closed
   submit_deadline: '',                       // 제출 마감 (비우면 없음)
+  day1_solutions: 'closed',                  // 1일차 해설(정답) 예제: open | closed
 };
 export function getSettings() {
   const out = { ...DEFAULT_SETTINGS };

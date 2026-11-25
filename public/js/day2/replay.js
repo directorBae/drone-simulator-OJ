@@ -46,9 +46,9 @@ export class ReplayScene extends Stage {
     input.starts.forEach((s, i) => {
       const pad = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.8), new THREE.MeshBasicMaterial({ color: 0x2c3e5c, side: THREE.DoubleSide }));
       pad.rotation.x = -Math.PI / 2;
-      pad.position.copy(P(s[0], s[1], 0.004));
+      pad.position.copy(P(s[0], s[1], (s[2] || 0) + 0.004)); // 출발점 (공중에서 출발하는 케이스도 있음)
       const l = label(String(i), 'pad-label');
-      l.position.copy(P(s[0], s[1] - 0.6, 0));
+      l.position.copy(P(s[0], s[1] - 0.6, s[2] || 0));
       this.static.add(pad, l);
     });
     const tgeo = new THREE.SphereGeometry(0.12, 12, 8);

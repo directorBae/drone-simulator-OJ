@@ -29,7 +29,7 @@ function start() {
   $('clearDeadline').onclick = () => { $('s_deadline').value = ''; };
   $('settingsForm').onsubmit = saveSettings;
   loadSettings();
-  events({ leaderboard: refreshLive, submission: refreshLive, config: () => loadSettings() });
+  events({ leaderboard: refreshLive, submission: refreshLive, judged: refreshLive, config: () => loadSettings() });
   setInterval(renderStatus, 1000);
 }
 function view(v) {
@@ -54,6 +54,7 @@ async function loadSettings() {
   $('s_lb').value = toLocal(s.leaderboard_open_at);
   $('s_deadline').value = toLocal(s.submit_deadline);
   document.querySelectorAll('[name=lbmode]').forEach((r) => { r.checked = r.value === s.leaderboard_mode; });
+  document.querySelectorAll('[name=sol1]').forEach((r) => { r.checked = r.value === s.day1_solutions; });
   renderStatus();
 }
 function renderStatus() {
@@ -62,6 +63,7 @@ function renderStatus() {
   const left = (iso) => { const ms = Date.parse(iso) - now; if (!(ms > 0)) return ''; const m = Math.floor(ms / 60000); return ` (${m >= 1440 ? Math.floor(m / 1440) + '일 ' : ''}${Math.floor((m % 1440) / 60)}시간 ${m % 60}분 남음)`; };
   $('status').innerHTML = `
     <div><span>1일차</span><b class="ok">● 항상 공개</b></div>
+    <div><span>1일차 해설</span><b class="${c.day1SolutionsOpen ? 'ok' : 'warn'}">${c.day1SolutionsOpen ? '● 공개 중' : '○ 숨김'}</b></div>
     <div><span>2일차</span><b class="${Date.parse(c.day2OpenAt) <= now ? 'ok' : 'warn'}">${Date.parse(c.day2OpenAt) <= now ? '● 공개 중' : '○ 닫힘' + left(c.day2OpenAt)}</b></div>
     <div><span>스코어보드</span><b class="${c.leaderboardOpen ? 'ok' : 'warn'}">${c.leaderboardOpen ? '● 공개 중' : c.leaderboardMode === 'auto' && c.leaderboardOpenAt ? '○ 예약됨' + left(c.leaderboardOpenAt) : '○ 비공개'}</b></div>
     <div><span>제출 마감</span><b class="${c.deadlinePassed ? 'warn' : 'ok'}">${c.submitDeadline ? (c.deadlinePassed ? '마감됨' : new Date(c.submitDeadline).toLocaleString('ko-KR') + left(c.submitDeadline)) : '없음'}</b></div>`;
@@ -69,10 +71,11 @@ function renderStatus() {
 async function saveSettings(e) {
   e.preventDefault();
   const mode = document.querySelector('[name=lbmode]:checked')?.value || 'auto';
-  if (mode === 'auto' && !$('s_lb').value) { $('saveMsg').textContent = '자동 공개를 고르면 공개 시각을 입력하세요'; return; }
+  // 자동 공개인데 시각이 비어 있으면 스코어보드는 비공개로 남음 (다른 설정은 그대로 저장되도록 막지 않음)
+  const lbNote = mode === 'auto' && !$('s_lb').value ? ' · 스코어보드 공개 시각이 비어 있어 아직 공개되지 않습니다' : '';
   try {
-    current = await api('/api/admin/settings', { method: 'PUT', body: { day2_open_at: toIso($('s_day2').value), leaderboard_mode: mode, leaderboard_open_at: toIso($('s_lb').value), submit_deadline: toIso($('s_deadline').value) } });
-    $('saveMsg').textContent = '✓ 저장했습니다 ' + new Date().toLocaleTimeString('ko-KR');
+    current = await api('/api/admin/settings', { method: 'PUT', body: { day2_open_at: toIso($('s_day2').value), leaderboard_mode: mode, leaderboard_open_at: toIso($('s_lb').value), submit_deadline: toIso($('s_deadline').value), day1_solutions: document.querySelector('[name=sol1]:checked')?.value || 'closed' } });
+    $('saveMsg').textContent = '✓ 저장했습니다 ' + new Date().toLocaleTimeString('ko-KR') + lbNote;
     renderStatus();
   } catch (ex) { $('saveMsg').textContent = '⚠ ' + ex.message; }
 }
@@ -122,8 +125,9 @@ async function openUser(id) {
   showFiles(d.project && d.project.files, `현재 코드 (저장 ${fmtTime(d.project && d.project.updatedAt)})`);
   $('mSubs').innerHTML = `<div class="m-sec">제출 ${d.submissions.length}회</div>` + d.submissions.map((s) => `
     <div class="m-sub" data-sub="${s.id}"><b>#${s.id}</b> <span class="dim">${fmtTime(s.createdAt)}</span><br>
+    ${s.status === 'judging' ? '<span class="dim">⏳ 채점 중</span>' : s.status === 'error' ? `<span class="bad-text">제출 오류: ${esc(s.error || '')}</span>` : `
     ${s.results.map((r) => `<span class="vchip v-${r.verdict}" title="${esc(r.message || '')}">${r.caseId}</span>`).join('')}
-    ${s.allAc ? `<b>${s.totalTime.toFixed(2)}s</b>` : `${s.acCount}/5`}</div>`).join('');
+    <b>${s.passCount}/${s.total}</b>${s.passCount ? ` · ${s.totalTime.toFixed(2)}s` : ''}`}</div>`).join('');
   $('mSubs').querySelectorAll('[data-sub]').forEach((x) => (x.onclick = async () => {
     const r = await api(`/api/admin/submissions/${x.dataset.sub}/files`);
     showFiles(r.files, `제출 #${x.dataset.sub} 의 코드`);
@@ -135,16 +139,18 @@ async function loadFeed() {
   const list = await api('/api/admin/submissions');
   $('feed').innerHTML = `<table class="tbl wide"><tr><th>#</th><th>시각</th><th>학번</th><th>이름</th><th>결과</th><th>합계</th></tr>` +
     list.map((s) => `<tr><td>${s.id}</td><td class="dim">${fmtTime(s.created_at)}</td><td>${esc(s.student_id)}</td><td><a href="#" data-u="${s.user_id}">${esc(s.name)}</a></td>
+      ${s.status === 'judging' ? '<td colspan="2" class="dim">⏳ 채점 중</td></tr>' : s.status === 'error' ? `<td colspan="2" class="bad-text">제출 오류: ${esc(s.error || '')}</td></tr>` : `
       <td>${s.results.map((r) => `<span class="vchip v-${r.verdict}" title="${esc(r.message || '')}">${r.caseId} ${VERDICT_NAMES[r.verdict]}</span>`).join(' ')}</td>
-      <td>${s.all_ac ? `<b>${s.total_time.toFixed(2)} s</b>` : `${s.ac_count}/5`}</td></tr>`).join('') + '</table>';
+      <td><b>${s.ac_count}/${s.results.length}</b>${s.ac_count ? ` · ${s.total_time.toFixed(2)} s` : ''}</td></tr>`}`).join('') + '</table>';
   $('feed').querySelectorAll('[data-u]').forEach((a) => (a.onclick = (e) => { e.preventDefault(); openUser(+a.dataset.u); }));
 }
 async function loadBoard() { $('board').innerHTML = renderLeaderboard(await api('/api/admin/leaderboard')); }
 async function loadCases() {
   const cs = await api('/api/admin/cases');
-  $('cases').innerHTML = cs.map((c) => `<div class="case-card"><b>${c.id}. ${esc(c.name)}</b> ${c.hidden ? '🔒 비공개' : ''} <span class="dim">${esc(c.desc)}</span>
+  $('cases').innerHTML = cs.map((c) => `<div class="case-card"><b>${c.id}. ${esc(c.name)}</b> ${c.hidden ? '🔒 비공개' : '공개'} ${c.graded ? '· ★ 공식 채점' : '· 연습용'} <span class="dim">${esc(c.desc)}</span>
     <button class="mini" data-dl="${c.id}">입력 JSON 받기</button>
-    <pre class="small">${esc(JSON.stringify(c.targets))}</pre></div>`).join('');
+    <pre class="small">starts  ${esc(JSON.stringify(c.input.starts))}
+targets ${esc(JSON.stringify(c.input.targets))}</pre></div>`).join('');
   $('cases').querySelectorAll('[data-dl]').forEach((b) => (b.onclick = () => {
     const c = cs.find((x) => x.id === +b.dataset.dl);
     const a = document.createElement('a');

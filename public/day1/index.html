@@ -4,9 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>1일차 · MAVLink 실습 — Drone Lab</title>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/lint/lint.min.css">
+  <!-- CDN CSS 는 화면 그리기를 막지 않도록 print 로 받은 뒤 적용 (로딩 화면이 바로 보이게) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css" media="print" onload="this.media='all';dispatchEvent(new Event('cm-css'))">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css" media="print" onload="this.media='all';dispatchEvent(new Event('cm-css'))">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/lint/lint.min.css" media="print" onload="this.media='all';dispatchEvent(new Event('cm-css'))">
   <link rel="stylesheet" href="../css/style.css">
   <script type="importmap">
   { "imports": {
@@ -16,6 +17,17 @@
   </script>
 </head>
 <body class="day1">
+  <!-- 로딩 화면: JS 가 뜨기 전부터 보이고, Python(Pyodide) 준비가 끝나면 사라짐 (js/core/ui.js bootScreen) -->
+  <div id="boot" class="boot" role="status" aria-live="polite">
+    <div class="boot-card">
+      <div class="boot-drone">✈</div>
+      <h2>드론 시뮬레이터 준비 중…</h2>
+      <div class="boot-bar"><i id="bootBar" style="width:8%"></i></div>
+      <p id="bootMsg" class="boot-msg">화면 구성 요소 불러오는 중…</p>
+      <div class="boot-actions"><button id="bootRetry" class="btn" hidden>다시 시도</button><button id="bootSkip" class="mini">기다리는 동안 둘러보기</button></div>
+    </div>
+  </div>
+  <script>setTimeout(function () { if (!window.__bootTouched) { var m = document.getElementById('bootMsg'); if (m) m.textContent = '오래 걸리고 있습니다. 인터넷 연결을 확인하고 새로고침하세요.'; } }, 30000);</script>
   <header>
     <a class="brand" href="../"><span class="logo">✈</span> Drone Lab <small>1일차 · 내 코드로 드론 띄우기</small></a>
     <div class="toolbar">
@@ -32,13 +44,13 @@
     <section id="left">
       <nav id="leftTabs" class="tabs">
         <button class="tab active" data-tab="paneCode">🐍 코드 (main.py)</button>
-        <button class="tab" data-tab="paneBuilder">✉ 메시지 작성기</button>
+        <button class="tab" data-tab="paneDict">📖 MAVLink 사전</button>
         <button class="tab" data-tab="paneMission">🎯 미션</button>
         <span class="spacer"></span><span id="lintSummary" class="lint-summary"></span>
       </nav>
       <div id="editorPane">
         <div id="paneCode" class="tabpane"><div id="editor"></div></div>
-        <div id="paneBuilder" class="tabpane scroll" hidden><div id="builder"></div></div>
+        <div id="paneDict" class="tabpane scroll" hidden><div id="dict"></div></div>
         <div id="paneMission" class="tabpane scroll" hidden>
           <div class="mission-wrap">
             <h3>미션: 네 개의 체크포인트</h3>

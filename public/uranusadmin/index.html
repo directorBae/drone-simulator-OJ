@@ -41,6 +41,10 @@
           <label><input type="radio" name="lbmode" value="auto"> 예약 시각에 자동 공개</label> <input type="datetime-local" id="s_lb" step="60"><br>
           <label><input type="radio" name="lbmode" value="open"> 지금 공개</label>
           <label><input type="radio" name="lbmode" value="closed"> 비공개</label></fieldset>
+        <fieldset><legend>1일차 해설(정답) 예제</legend>
+          <label><input type="radio" name="sol1" value="closed"> 숨김</label>
+          <label><input type="radio" name="sol1" value="open"> 공개</label>
+          <span class="dim">공개하면 학생 1일차 화면의 예제 목록에 '📗 해설' 6개(미션 완성본·보너스)가 바로 나타납니다. 관리자는 항상 볼 수 있음</span></fieldset>
         <fieldset><legend>제출 마감</legend>
           <input type="datetime-local" id="s_deadline" step="60"> <button type="button" class="mini" id="clearDeadline">마감 없음</button></fieldset>
         <button class="btn primary">저장</button> <span id="saveMsg" class="dim"></span>

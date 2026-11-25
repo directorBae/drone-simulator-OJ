@@ -1,26 +1,27 @@
-// 채점기 자체 테스트: node server/tools/judge-selftest.mjs <solution.py>
-import { execFileSync } from 'node:child_process';
+// 채점기·케이스 점검: node server/tools/judge-selftest.mjs <풀이 main.py 또는 프로젝트 폴더>
+// 서버와 같은 실행기(sandbox.js)로 7개 케이스(공개 4 + 비공개 3)를 모두 돌려 채점 결과를 보여 줌
+import fs from 'node:fs';
+import path from 'node:path';
 import { CASES, caseInput } from '../cases.js';
+import { runPython } from '../sandbox.js';
 import { judgeCase } from '../../public/js/day2/judge.js';
-const sol = process.argv[2];
-let total = 0;
+
+const target = process.argv[2];
+if (!target) { console.log('사용법: node server/tools/judge-selftest.mjs <main.py 또는 프로젝트 폴더>'); process.exit(1); }
+const files = {};
+if (fs.statSync(target).isDirectory()) {
+  const walk = (dir, rel = '') => { for (const n of fs.readdirSync(dir)) { const p = path.join(dir, n), r = rel ? `${rel}/${n}` : n; if (fs.statSync(p).isDirectory()) { if (!/^(__pycache__|\.git|venv|\.venv)$/.test(n)) walk(p, r); } else if (/\.py$/.test(n)) files[r] = fs.readFileSync(p, 'utf8'); } };
+  walk(target);
+} else files['main.py'] = fs.readFileSync(target, 'utf8');
+
+let pass = 0, total = 0;
 for (const c of CASES) {
   const input = caseInput(c);
-  const t0 = Date.now();
-  const out = execFileSync('python', [sol], { input: JSON.stringify(input), maxBuffer: 1 << 26 }).toString();
-  const r = judgeCase(input, out);
-  total += r.missionTime || 0;
-  console.log(`case ${c.id} ${c.name}: ${r.verdict} — ${r.message} (계산 ${Date.now() - t0}ms)`);
-  if (r.verdict === 'AC') {
-    // 일부러 망가뜨리기
-    const o = JSON.parse(out);
-    const bad1 = structuredClone(o); bad1.paths[3][2][1] += 50;
-    const bad2 = structuredClone(o); bad2.paths[5] = bad2.paths[5].slice(0, -1);
-    const bad3 = structuredClone(o); bad3.paths[1] = bad3.paths[2].map((w) => [w[0], w[1] - 1.9, w[2], w[3]]); bad3.paths[1][0] = [0, 2, 0, 0];
-    for (const [n, b] of [['far waypoint', bad1], ['no return', bad2], ['bad copy', bad3], ['not json', 'hello'], ['missing', { p: 1 }]]) {
-      const rr = judgeCase(input, typeof b === 'string' ? b : JSON.stringify(b));
-      console.log(`   ↳ ${n}: ${rr.verdict}/${rr.kind} ${rr.message.slice(0, 110)}`);
-    }
-  }
+  const run = await runPython({ files, stdin: JSON.stringify(input) });
+  const tag = `${c.public ? '공개' : '비공개'}${c.graded ? '·채점' : ''}`;
+  if (run.status !== 'ok') { console.log(`case ${c.id} ${c.name} [${tag}]: ${run.status} ${(run.error && run.error.text.split('\n').pop()) || ''} (계산 ${run.ms}ms)`); continue; }
+  const r = judgeCase(input, run.stdout);
+  if (c.graded && r.verdict === 'AC') { pass++; total += r.missionTime; }
+  console.log(`case ${c.id} ${c.name} [${tag}]: ${r.verdict} — ${r.message} (계산 ${run.ms}ms)`);
 }
-console.log('미션 시간 합', total.toFixed(2));
+console.log(`공식 채점 5개 중 ${pass}개 통과 · 시간 합 ${total.toFixed(2)}s`);

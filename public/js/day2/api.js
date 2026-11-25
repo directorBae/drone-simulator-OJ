@@ -1,9 +1,10 @@
 // 서버 API 호출 도우미
-export async function api(path, { method = 'GET', body } = {}) {
+// raw: { body, headers } 를 주면 JSON 으로 바꾸지 않고 그대로 보냄 (압축한 제출 본문 등)
+export async function api(path, { method = 'GET', body, raw } = {}) {
   const res = await fetch(path, {
     method,
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    headers: raw ? raw.headers : body !== undefined ? { 'Content-Type': 'application/json' } : {},
+    body: raw ? raw.body : body !== undefined ? JSON.stringify(body) : undefined,
     credentials: 'same-origin',
   });
   let data = null;

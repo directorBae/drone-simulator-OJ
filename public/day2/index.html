@@ -4,9 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>2일차 · 군집 경로 챌린지 — Drone OJ</title>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/lint/lint.min.css">
+  <!-- CDN CSS 는 화면 그리기를 막지 않도록 print 로 받은 뒤 적용 (로딩 화면이 바로 보이게) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css" media="print" onload="this.media='all';dispatchEvent(new Event('cm-css'))">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css" media="print" onload="this.media='all';dispatchEvent(new Event('cm-css'))">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/lint/lint.min.css" media="print" onload="this.media='all';dispatchEvent(new Event('cm-css'))">
   <link rel="stylesheet" href="../css/style.css">
   <script type="importmap">
   { "imports": {
@@ -16,6 +17,17 @@
   </script>
 </head>
 <body class="day2">
+  <!-- 로딩 화면: JS 가 뜨기 전부터 보이고, Python(Pyodide) 준비가 끝나면 사라짐 (js/core/ui.js bootScreen) -->
+  <div id="boot" class="boot" role="status" aria-live="polite">
+    <div class="boot-card">
+      <div class="boot-drone">✈</div>
+      <h2>드론 시뮬레이터 준비 중…</h2>
+      <div class="boot-bar"><i id="bootBar" style="width:8%"></i></div>
+      <p id="bootMsg" class="boot-msg">화면 구성 요소 불러오는 중…</p>
+      <div class="boot-actions"><button id="bootRetry" class="btn" hidden>다시 시도</button><button id="bootSkip" class="mini">기다리는 동안 둘러보기</button></div>
+    </div>
+  </div>
+  <script>setTimeout(function () { if (!window.__bootTouched) { var m = document.getElementById('bootMsg'); if (m) m.textContent = '오래 걸리고 있습니다. 인터넷 연결을 확인하고 새로고침하세요.'; } }, 30000);</script>
   <!-- 로그인 / 가입 -->
   <div id="auth" hidden>
     <form id="authForm" class="auth-card" data-mode="login">
@@ -27,6 +39,7 @@
       <div id="signupExtra2" hidden><label class="pw2">비밀번호 확인 <input id="aPw2" type="password" autocomplete="new-password"></label></div>
       <button id="authSubmit" class="btn primary" type="submit">로그인</button>
       <div id="authMsg" class="auth-msg"></div>
+      <p id="bootMini" class="dim small boot-mini">드론 시뮬레이터 준비 중…</p>
       <p class="dim small">비밀번호를 잊었으면 강사에게 초기화(0000)를 요청하세요. <a href="../">처음으로</a></p>
     </form>
   </div>
@@ -59,8 +72,8 @@
             <div class="pane-title"><span>프로젝트</span><span class="spacer"></span>
               <button id="btnNewFile" class="mini" title="새 파일">＋파일</button>
               <button id="btnNewFolder" class="mini" title="새 폴더(패키지)">＋폴더</button>
-              <button id="btnRename" class="mini">이름</button>
-              <button id="btnDelete" class="mini">삭제</button>
+              <button id="btnRename" class="mini" title="선택한 파일/폴더 이름 바꾸기">이름</button>
+              <button id="btnDelete" class="mini" title="선택한 파일/폴더 삭제 (몇 초 동안 되돌리기 가능)">삭제</button>
               <button id="btnUpload" class="mini" title="파일 업로드">⬆파일</button>
               <button id="btnUploadDir" class="mini" title="폴더 통째로 업로드">⬆폴더</button>
               <input id="upFiles" type="file" multiple hidden accept=".py,.txt,.json,.csv,.md">
@@ -85,7 +98,7 @@
           <div class="run-bar">
             <select id="caseSelect"></select>
             <button id="btnRun" class="btn" disabled title="Ctrl+Enter">▶ 실행</button>
-            <button id="btnSubmit" class="btn primary" disabled title="Ctrl+Shift+Enter">✔ 제출 (5개 케이스)</button>
+            <button id="btnSubmit" class="btn primary" disabled title="서버가 공개 2 + 비공개 3 케이스로 공식 채점 (Ctrl+Shift+Enter)">✔ 제출 (공식 채점)</button>
             <button id="btnStop" class="btn danger" disabled>■ 중지</button>
           </div>
           <div id="viewPane">

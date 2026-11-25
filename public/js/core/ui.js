@@ -4,6 +4,58 @@ export const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', 
 export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const BASE = new URL('..', import.meta.url).href; // .../js/
 
+// =====================================================================  로딩 화면 (#boot)
+// 페이지 HTML 에 정적으로 들어 있어 JS 가 뜨기 전부터 보임. Runner 가 Python 준비 상태를 알려 주고, 준비되면 사라짐
+export const bootScreen = {
+  doneFlag: false, dismissed: false, held: false,
+  get el() { return document.getElementById('boot'); },
+  /** 진행 상황 (pct: 0~100, 없으면 그대로) */
+  update(text, pct) {
+    window.__bootTouched = true;
+    const el = this.el;
+    if (el) {
+      if (text) el.querySelector('#bootMsg').textContent = text;
+      if (pct != null) el.querySelector('#bootBar').style.width = pct + '%';
+    }
+    const mini = document.getElementById('bootMini');
+    if (mini && text) mini.textContent = `드론 시뮬레이터 준비 중 · ${text}`;
+  },
+  done() {
+    if (this.doneFlag) return;
+    this.doneFlag = true;
+    this.update('준비 완료', 100);
+    const mini = document.getElementById('bootMini');
+    if (mini) mini.textContent = '✓ 드론 시뮬레이터 준비 완료';
+    setTimeout(() => this._hide(), 250);
+  },
+  fail(text) {
+    const el = this.el;
+    if (!el || this.doneFlag) return;
+    el.classList.add('failed');
+    el.querySelector('#bootMsg').textContent = text;
+    el.querySelector('#bootRetry').hidden = false;
+    if (!this.held) el.hidden = false;
+  },
+  /** 잠시 숨김 (2일차 로그인 화면 동안). show() 로 다시 보임 — 이미 준비됐으면 안 보임 */
+  hold() { this.held = true; this._hide(true); },
+  show() { this.held = false; const el = this.el; if (el && !this.doneFlag && !this.dismissed) el.hidden = false; },
+  _hide(keep) {
+    const el = this.el;
+    if (el) el.hidden = true;
+    if (!keep) refreshEditors();
+  },
+  init() {
+    const el = this.el;
+    if (!el) return;
+    el.querySelector('#bootSkip').onclick = () => { this.dismissed = true; this._hide(); };
+    el.querySelector('#bootRetry').onclick = () => location.reload();
+  },
+};
+bootScreen.init();
+// CodeMirror CSS 는 렌더링을 막지 않게 늦게 붙으므로, 붙은 뒤·로딩 화면이 사라진 뒤 편집기 크기를 다시 계산
+function refreshEditors() { document.querySelectorAll('.CodeMirror').forEach((el) => el.CodeMirror && el.CodeMirror.refresh()); }
+window.addEventListener('cm-css', refreshEditors);
+
 // =====================================================================  console
 export class Console {
   constructor(el) { this.el = el; }
@@ -126,28 +178,30 @@ export class Runner {
     this.ready = false; this.busy = false;
     this.worker = new Worker(BASE + 'core/runner-worker.js');
     this.worker.onmessage = (e) => this._msg(e.data);
-    this.worker.onerror = (e) => this.onStatus('error', '워커 오류: ' + (e.message || e));
+    this.worker.onerror = (e) => { this.onStatus('error', '워커 오류: ' + (e.message || e)); bootScreen.fail('Python 실행기를 시작하지 못했습니다: ' + (e.message || e)); };
     this.worker.postMessage({ type: 'init', sim });
     this.onStatus('loading', 'Python 로딩 중…');
+    bootScreen.update('Python 엔진 시작하는 중…', 20);
   }
   _msg(m) {
     if (m.type === 'state') this.lastSnap = m.snap;
-    if (m.type === 'pystatus') this.onStatus('loading', m.text);
+    if (m.type === 'pystatus') { this.onStatus('loading', m.text); bootScreen.update(m.text, m.pct); }
     if (m.type === 'ready') {
       this.ready = true; this.version = m.version;
       this.onStatus('ready', '● ' + m.version);
+      bootScreen.done();
       this.waiters.splice(0).forEach((r) => r());
       linter.start();
     }
-    if (m.type === 'pyerror') this.onStatus('error', 'Python 로드 실패');
+    if (m.type === 'pyerror') { this.onStatus('error', 'Python 로드 실패'); bootScreen.fail('Python 엔진을 불러오지 못했습니다. 인터넷 연결을 확인하고 다시 시도하세요. (' + m.text + ')'); }
     if (m.type === 'finished') { this.busy = false; if (this._done) { const d = this._done; this._done = null; d(m); } }
     this.onMessage(m);
   }
   whenReady() { return this.ready ? Promise.resolve() : new Promise((r) => this.waiters.push(r)); }
   /** 실행. finished 메시지로 resolve 되는 Promise 를 돌려줌 */
-  run({ files, entry = 'main.py', stdin = '', capture = false }) {
+  run({ files, entry = 'main.py', stdin = '', capture = false, captureLimit = 0 }) {
     this.busy = true;
-    return new Promise((resolve) => { this._done = resolve; this.worker.postMessage({ type: 'run', files, entry, stdin, capture }); });
+    return new Promise((resolve) => { this._done = resolve; this.worker.postMessage({ type: 'run', files, entry, stdin, capture, captureLimit }); });
   }
   repl(code) { this.busy = true; this.worker.postMessage({ type: 'repl', code }); }
   inject(hex) { this.worker.postMessage({ type: 'inject', hex }); }

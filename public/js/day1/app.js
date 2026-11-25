@@ -2,8 +2,9 @@ import { $, Console, createEditor, Runner, Inspector, setPill, setupSplitters } 
 import { Day1Scene } from './scene1.js';
 import { EXAMPLES } from './examples.js';
 import { LinkViz } from './linkviz.js';
-import { MessageBuilder } from './builder.js';
+import { MavDictionary } from './dictionary.js';
 import { Missions } from './missions.js';
+import { api, events } from '../day2/api.js';
 
 const RUN_LIMIT_SEC = 120; // 실행 시간 제한
 const MODE_NAMES = { 0: 'STABILIZE', 1: 'ACRO', 2: 'ALT_HOLD', 3: 'AUTO', 4: 'GUIDED', 5: 'LOITER', 6: 'RTL', 7: 'CIRCLE', 9: 'LAND', 16: 'POSHOLD', 17: 'BRAKE' };
@@ -25,8 +26,8 @@ let running = false, runTimer = null, lastSnap = null;
 const simOpts = () => ({ count: drones, spacing: 3 });
 
 // ------------------------------------------------------------------ editor
-const editor = createEditor($('editor'), { onRun: run, summaryEl: $('lintSummary'), onChange: () => store.set('code', editor.getValue()) });
-editor.setValue(store.get('code', EXAMPLES[0].code));
+const editor = createEditor($('editor'), { onRun: run, summaryEl: $('lintSummary'), onChange: () => store.set('code.v2', editor.getValue()) });
+editor.setValue(store.get('code.v2', EXAMPLES[0].code));
 editor.clearHistory();
 
 // ------------------------------------------------------------------ runner
@@ -91,7 +92,7 @@ function buttons() {
 async function run() {
   if (!runner.ready || running) return;
   editor.clearError();
-  store.set('code', editor.getValue());
+  store.set('code.v2', editor.getValue());
   con.div('▶ 실행 main.py');
   running = true;
   buttons();
@@ -119,7 +120,6 @@ function resetDrones() {
   missions.reset();
   link.setOpen(false);
   link.setDrones(drones);
-  builder.refreshTargets();
   con.sys(`↺ 드론 ${drones}대를 초기 상태로 되돌렸습니다`);
   buttons();
 }
@@ -132,15 +132,34 @@ document.addEventListener('keydown', (e) => {
 
 // ------------------------------------------------------------------ examples / drones
 const exSel = $('exampleSelect');
-exSel.add(new Option('📂 예제 · 테스트 코드…', ''));
-EXAMPLES.forEach((ex, i) => exSel.add(new Option(ex.title, String(i))));
+let solutions = []; // 관리자가 공개한 해설 (서버에서 받음)
+function renderExamples() {
+  exSel.innerHTML = '';
+  exSel.add(new Option('📂 예제 · 테스트 코드…', ''));
+  EXAMPLES.forEach((ex, i) => exSel.add(new Option(ex.title, String(i))));
+  if (solutions.length) {
+    const g = document.createElement('optgroup');
+    g.label = '📗 해설 (강사 공개)';
+    solutions.forEach((ex, i) => g.appendChild(new Option(ex.title, 's' + i)));
+    exSel.appendChild(g);
+  }
+}
+renderExamples();
+async function loadSolutions() {
+  const r = await api('/api/day1/solutions');
+  solutions = r.solutions || [];
+  renderExamples();
+}
+// 서버 없이 정적 호스팅만 할 때는 해설 없이 동작
+loadSolutions().then(() => events({ config: () => loadSolutions().catch(() => {}) })).catch(() => {});
 exSel.onchange = () => {
-  const ex = EXAMPLES[+exSel.value];
+  const v = exSel.value;
+  const ex = v.startsWith('s') ? solutions[+v.slice(1)] : EXAMPLES[+v];
   exSel.value = '';
   if (!ex) return;
   if (editor.getValue().trim() && !confirm(`'${ex.title}' 로 바꿀까요? 지금 코드는 사라집니다.`)) return;
   editor.setValue(ex.code);
-  store.set('code', ex.code);
+  store.set('code.v2', ex.code);
   if (ex.drones !== drones) { drones = ex.drones; $('droneCount').value = String(drones); store.set('drones', drones); resetDrones(); }
 };
 $('droneCount').value = String(drones);
@@ -156,14 +175,8 @@ document.querySelectorAll('.tab[data-tab]').forEach((t) => {
   };
 });
 
-// ------------------------------------------------------------------ builder
-const builder = new MessageBuilder($('builder'), {
-  getDrones: () => drones,
-  onSend: (hex, name) => {
-    if (running) con.sys(`(코드가 실행 중이라 ${name} 은(는) 코드가 끝난 뒤에 전달됩니다)`);
-    runner.inject(hex);
-  },
-});
+// ------------------------------------------------------------------ MAVLink 사전
+new MavDictionary($('dict'));
 
 // ------------------------------------------------------------------ REPL
 const replHist = [];
@@ -221,4 +234,4 @@ $('chkFollow').onchange = (e) => { scene.follow = e.target.checked; };
 $('btnView').onclick = () => scene.resetView();
 $('btnTrail').onclick = () => scene.clearTrails();
 setupSplitters({ main: $('splitMain'), layout: $('layout'), left: $('left'), leftSplit: $('splitLeft'), leftTop: $('leftTabs'), right: $('right'), rightSplit: $('splitRight') });
-con.sys('1일차 MAVLink 실습 — 코드를 실행하거나 [메시지 작성기] 탭에서 메시지를 바로 보내 보세요. Python 준비 중 (처음엔 10초 정도 걸릴 수 있어요)…');
+con.sys('1일차 MAVLink 실습 — 코드를 실행해 보세요. 메시지·명령·값은 [📖 MAVLink 사전] 탭에서 찾아볼 수 있습니다. Python 준비 중 (처음엔 10초 정도 걸릴 수 있어요)…');

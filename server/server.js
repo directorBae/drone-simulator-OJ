@@ -1,34 +1,50 @@
 /*
  * Drone OJ 서버
  *  - 정적 파일(public/) 제공. 2일차 화면은 공개 시각 전에는 닫힘 (관리자는 미리보기 가능)
- *  - 학번 가입/로그인, 프로젝트(코드) 저장, 제출·공식 채점, 실시간 리더보드(SSE), 관리자 API
+ *  - 학번 가입/로그인, 프로젝트(코드) 저장, 제출 → 서버에서 학생 코드 실행·공식 채점, 실시간 리더보드(SSE), 관리자 API
  *
  * 환경 변수
  *   PORT            (기본 8080)
  *   ADMIN_PASSWORD  관리자 비밀번호 (없으면 시작할 때 무작위로 만들어 콘솔에 출력)
  *   DATA_DIR        SQLite 파일 위치 (기본 ./data)
  *   COOKIE_SECURE=1 HTTPS 로만 쿠키 전송 (HTTPS 뒤에서 운영할 때)
+ *   JUDGE_WORKERS   동시에 채점하는 제출 수 (기본: CPU 수 − 1, 최대 4)
+ *   JUDGE_TIMEOUT_SEC 케이스당 경로 계산 시간 제한 (기본 30초)
+ *   JUDGE_MEM_MB    학생 프로그램 메모리 제한 (기본 1024MB, 리눅스)
+ *   SANDBOX_USER    학생 코드를 실행할 사용자 (기본 sandbox, root 로 실행 중일 때만 사용) — sandbox.js 참고
  */
 import express from 'express';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { db, getSettings, setSetting, DEFAULT_SETTINGS, hashPassword, checkPassword, now, newToken } from './db.js';
-import { CASES, caseInput, STARTS, RULES } from './cases.js';
-import { judgeCase, VERDICT_NAMES } from '../public/js/day2/judge.js';
+import { CASES, PUBLIC_CASES, GRADED_CASES, caseInput, studentCaseName, RULES } from './cases.js';
+import { validFiles } from './validate.js';
+import { Grader, CPU_LIMIT_SEC } from './grader.js';
+import { SANDBOX_INFO } from './sandbox.js';
+import { DAY1_SOLUTIONS } from './day1-solutions.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.resolve(__dirname, '../public');
 const PORT = +process.env.PORT || 8080;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || crypto.randomBytes(6).toString('base64url');
 const SESSION_DAYS = 14;
-const MAX_PROJECT_BYTES = 1_000_000, MAX_FILES = 100;
-const MAX_STDOUT = 8_000_000;
+const grader = new Grader({
+  size: +process.env.JUDGE_WORKERS || 0,
+  onProgress: (id) => broadcast('progress', { id }),
+  onDone: (id, r) => {
+    broadcast('judged', { id });
+    if (!r) return;
+    const u = db.prepare('SELECT u.name FROM submissions s JOIN users u ON u.id = s.user_id WHERE s.id = ?').get(id);
+    broadcast('leaderboard');
+    if (u) broadcast('submission', { name: u.name, passCount: r.passCount, total: GRADED_CASES.length });
+  },
+});
 
 const app = express();
 app.set('trust proxy', true);
 app.disable('x-powered-by');
-app.use(express.json({ limit: '45mb' }));
+app.use(express.json({ limit: '5mb' })); // 큰 제출 본문은 /submit/finish 에서만 따로 받음
 
 // ====================================================================== 공통
 function cookies(req) {
@@ -72,6 +88,7 @@ function config() {
     day2OpenAt: s.day2_open_at, day2Open,
     leaderboardOpen: lb, leaderboardOpenAt: s.leaderboard_mode === 'auto' ? s.leaderboard_open_at : '', leaderboardMode: s.leaderboard_mode,
     submitDeadline: s.submit_deadline, deadlinePassed,
+    day1SolutionsOpen: s.day1_solutions === 'open',
   };
 }
 function day2Allowed(req) { return config().day2Open || session(req).admin; }
@@ -168,27 +185,23 @@ app.post('/api/auth/password', requireUser, (req, res) => {
   res.json({ ok: true });
 });
 
-// ---- 2일차: 문제 · 프로젝트
-const publicCase = (c) => ({ id: c.id, name: c.name, desc: c.desc, hidden: c.hidden, input: c.hidden ? null : caseInput(c) });
-app.get('/api/day2/cases', (req, res) => {
-  if (!day2Allowed(req)) return err(res, 403, '아직 공개되지 않았습니다');
-  res.json({ rules: RULES, starts: STARTS, cases: CASES.map(publicCase) });
+// ---- 1일차: 해설(정답) 예제 — 관리자가 공개하기 전에는 관리자에게만
+app.get('/api/day1/solutions', (req, res) => {
+  const open = config().day1SolutionsOpen;
+  res.json({ open, solutions: open || session(req).admin ? DAY1_SOLUTIONS : [] });
 });
 
-function validFiles(files) {
-  if (!files || typeof files !== 'object' || Array.isArray(files)) return '파일 목록 형식이 올바르지 않습니다';
-  const entries = Object.entries(files);
-  if (entries.length > MAX_FILES) return `파일은 최대 ${MAX_FILES}개까지 저장할 수 있습니다`;
-  let size = 0;
-  for (const [p, c] of entries) {
-    if (typeof c !== 'string') return `${p}: 내용이 문자열이 아닙니다`;
-    if (!/^[\w\-. /가-힣]+$/.test(p) || p.includes('..') || p.startsWith('/') || p.length > 200) return `파일 경로 '${p}' 를 쓸 수 없습니다`;
-    size += p.length + c.length;
-  }
-  if (size > MAX_PROJECT_BYTES) return `프로젝트 크기가 ${MAX_PROJECT_BYTES / 1e6}MB 를 넘습니다`;
-  if (!('main.py' in files)) return 'main.py 가 필요합니다';
-  return null;
-}
+// ---- 2일차: 문제 · 프로젝트
+// 학생에게는 공개 케이스 4개의 입력과, 채점 케이스 5개의 이름(비공개는 번호만)만 줌
+app.get('/api/day2/cases', (req, res) => {
+  if (!day2Allowed(req)) return err(res, 403, '아직 공개되지 않았습니다');
+  res.json({
+    rules: RULES, timeLimitSec: CPU_LIMIT_SEC,
+    cases: PUBLIC_CASES.map((c) => ({ id: c.id, name: c.name, desc: c.desc, graded: c.graded, input: caseInput(c) })),
+    graded: GRADED_CASES.map((c) => ({ id: c.id, name: studentCaseName(c), hidden: !c.public })),
+  });
+});
+
 app.get('/api/day2/project', requireUser, (req, res) => {
   const r = db.prepare('SELECT files, updated_at FROM projects WHERE user_id = ?').get(req.user.id);
   res.json(r ? { files: JSON.parse(r.files), updatedAt: r.updated_at } : { files: null });
@@ -202,52 +215,57 @@ app.put('/api/day2/project', requireUser, (req, res) => {
   res.json({ ok: true, updatedAt: t });
 });
 
-// ---- 2일차: 제출 (브라우저에서 실행 → 서버가 공식 채점)
-app.post('/api/day2/submit/start', requireUser, (req, res) => {
+// ---- 2일차: 제출 — 코드를 받아 서버에서 채점 케이스 5개(공개 2 + 비공개 3)를 실행·채점
+app.post('/api/day2/submissions', requireUser, (req, res) => {
   const cfg = config();
   if (!cfg.day2Open && !req.isAdmin) return err(res, 403, '아직 공개되지 않았습니다');
   if (cfg.deadlinePassed) return err(res, 403, '제출이 마감되었습니다');
-  const last = db.prepare('SELECT created_at FROM submissions WHERE user_id = ? ORDER BY id DESC LIMIT 1').get(req.user.id);
-  if (last && Date.now() - Date.parse(last.created_at) < 10_000) return err(res, 429, '제출은 10초에 한 번만 할 수 있습니다');
-  db.prepare('DELETE FROM submit_tokens WHERE user_id = ?').run(req.user.id);
-  const token = newToken();
-  db.prepare('INSERT INTO submit_tokens(token, user_id, created_at) VALUES (?, ?, ?)').run(token, req.user.id, now());
-  res.json({ token, cases: CASES.map((c) => ({ id: c.id, name: c.name, hidden: c.hidden, input: caseInput(c) })) });
-});
-app.post('/api/day2/submit/finish', requireUser, (req, res) => {
-  const { token, files, results } = req.body || {};
-  const tk = db.prepare('SELECT * FROM submit_tokens WHERE token = ? AND user_id = ?').get(String(token || ''), req.user.id);
-  if (!tk) return err(res, 400, '제출 토큰이 올바르지 않습니다. 다시 제출하세요');
-  db.prepare('DELETE FROM submit_tokens WHERE token = ?').run(tk.token);
-  if (Date.now() - Date.parse(tk.created_at) > 30 * 60_000) return err(res, 400, '제출 시간이 너무 오래 걸렸습니다. 다시 제출하세요');
+  const files = req.body && req.body.files;
   const bad = validFiles(files);
   if (bad) return err(res, 400, bad);
-  if (!Array.isArray(results)) return err(res, 400, 'results 가 없습니다');
-
-  const judged = CASES.map((c) => {
-    const r = results.find((x) => x && x.caseId === c.id) || { status: 'RE', error: '실행 결과가 없습니다' };
-    const base = { caseId: c.id, name: c.name, hidden: c.hidden, ms: Math.round(+r.ms || 0) };
-    if (r.status === 'CE' || r.status === 'RE' || r.status === 'TLE') {
-      return { ...base, verdict: r.status, message: String(r.error || VERDICT_NAMES[r.status]).slice(0, 2000) };
-    }
-    const out = String(r.stdout || '');
-    if (out.length > MAX_STDOUT) return { ...base, verdict: 'RV', message: '출력이 너무 큽니다' };
-    const j = judgeCase(caseInput(c), out);
-    return { ...base, verdict: j.verdict, kind: j.kind, message: j.message, missionTime: j.missionTime ?? null, collision: j.collision ? { i: j.collision.i, j: j.collision.j, t: j.collision.t, pos: j.collision.pos } : null };
-  });
-  const acCount = judged.filter((r) => r.verdict === 'AC').length;
-  const allAc = acCount === CASES.length;
-  const total = allAc ? judged.reduce((s, r) => s + r.missionTime, 0) : null;
+  const last = db.prepare('SELECT created_at FROM submissions WHERE user_id = ? ORDER BY id DESC LIMIT 1').get(req.user.id);
+  if (last && Date.now() - Date.parse(last.created_at) < 10_000) return err(res, 429, '제출은 10초에 한 번만 할 수 있습니다');
+  if (db.prepare("SELECT 1 FROM submissions WHERE user_id = ? AND status = 'judging'").get(req.user.id)) return err(res, 429, '이전 제출을 아직 채점하고 있습니다. 끝난 뒤에 다시 제출하세요');
   const t = now();
-  const ins = db.prepare('INSERT INTO submissions(user_id, created_at, files, results, ac_count, all_ac, total_time) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(req.user.id, t, JSON.stringify(files), JSON.stringify(judged), acCount, allAc ? 1 : 0, total);
-  broadcast('leaderboard');
-  broadcast('submission', { name: req.user.name, acCount, allAc });
-  res.json({ id: Number(ins.lastInsertRowid), createdAt: t, results: judged, acCount, allAc, totalTime: total });
+  const waiting = JSON.stringify(GRADED_CASES.map((c) => ({ caseId: c.id, name: c.name, hidden: !c.public, state: 'WAIT' })));
+  const id = Number(db.prepare("INSERT INTO submissions(user_id, created_at, files, results, ac_count, all_ac, total_time, status) VALUES (?, ?, ?, ?, 0, 0, NULL, 'judging')")
+    .run(req.user.id, t, JSON.stringify(files), waiting).lastInsertRowid);
+  grader.enqueue(id);
+  res.status(202).json({ id, createdAt: t, status: 'judging', ahead: grader.ahead(id) });
 });
+
+// 학생에게 보여 줄 케이스 결과. 비공개 케이스는 입력(좌표·출력값)이 드러나지 않게 요약만
+const CASE_BY_ID = new Map(CASES.map((c) => [c.id, c]));
+const RV_TEXT = { format: () => '출력 형식 오류', speed: (r) => `속도 초과 (드론 ${r.drone})`, bounds: (r) => `비행 영역 이탈 (드론 ${r.drone})`, target: (r) => `목표 미도착 (드론 ${r.drone})`, time: () => '미션 시간 초과', size: () => '출력이 너무 큼' };
+function studentResult(r) {
+  const c = CASE_BY_ID.get(r.caseId);
+  const out = { caseId: r.caseId, name: c ? studentCaseName(c) : r.name, hidden: !!r.hidden, state: r.state || r.verdict, verdict: r.verdict || null, missionTime: r.missionTime ?? null, computeMs: r.computeMs ?? null };
+  if (!r.hidden) return { ...out, message: r.message || '', kind: r.kind, collision: r.collision || null, drone: r.drone ?? null, t: r.t ?? null, errFile: r.errFile || null, errLine: r.errLine || null };
+  const where = r.errFile ? ` (${r.errFile}${r.errLine ? ` ${r.errLine}번째 줄` : ''})` : '';
+  const msg = {
+    AC: () => `성공 · 미션 시간 ${(+r.missionTime).toFixed(2)} s`,
+    COL: () => (r.collision ? `충돌: 드론 ${r.collision.i} 와 드론 ${r.collision.j}, t=${r.collision.t.toFixed(2)}s` : '충돌'),
+    TLE: () => r.message,
+    CE: () => `컴파일 에러: ${r.errType || 'SyntaxError'}${where}`,
+    RE: () => `런타임 에러: ${r.errType || '예외'}${where} — 비공개 케이스라 자세한 메시지는 보여 주지 않습니다`,
+    RV: () => (RV_TEXT[r.kind] || (() => r.message))(r),
+  }[r.verdict];
+  return { ...out, message: msg ? msg() : '', collision: r.collision ? { i: r.collision.i, j: r.collision.j, t: r.collision.t } : null };
+}
+const subRow = (r, student) => {
+  const results = JSON.parse(r.results);
+  return { id: r.id, createdAt: r.created_at, status: r.status, error: r.error, results: student ? results.map(studentResult) : results, passCount: r.ac_count, allAc: !!r.all_ac, totalTime: r.total_time, total: GRADED_CASES.length };
+};
+const SUB_COLS = 'id, created_at, status, error, results, ac_count, all_ac, total_time';
 app.get('/api/day2/submissions/mine', requireUser, (req, res) => {
-  const rows = db.prepare('SELECT id, created_at, results, ac_count, all_ac, total_time FROM submissions WHERE user_id = ? ORDER BY id DESC LIMIT 100').all(req.user.id);
-  res.json(rows.map((r) => ({ id: r.id, createdAt: r.created_at, results: JSON.parse(r.results), acCount: r.ac_count, allAc: !!r.all_ac, totalTime: r.total_time })));
+  const rows = db.prepare(`SELECT ${SUB_COLS} FROM submissions WHERE user_id = ? ORDER BY id DESC LIMIT 100`).all(req.user.id);
+  res.json(rows.map((r) => subRow(r, true)));
+});
+// 채점 상황 (결과 화면이 1초마다 물어봄)
+app.get('/api/day2/submissions/:id(\\d+)', requireUser, (req, res) => {
+  const r = db.prepare(`SELECT ${SUB_COLS} FROM submissions WHERE id = ? AND user_id = ?`).get(+req.params.id, req.user.id);
+  if (!r) return err(res, 404, '제출을 찾을 수 없습니다');
+  res.json({ ...subRow(r, true), ahead: r.status === 'judging' ? grader.ahead(r.id) : 0 });
 });
 app.get('/api/day2/submissions/:id/files', requireUser, (req, res) => {
   const r = db.prepare('SELECT files FROM submissions WHERE id = ? AND user_id = ?').get(+req.params.id, req.user.id);
@@ -257,36 +275,36 @@ app.get('/api/day2/submissions/:id/files', requireUser, (req, res) => {
 
 // ---- 리더보드
 function maskId(s) { return s.length <= 4 ? s : s.slice(0, 4) + '*'.repeat(Math.max(0, s.length - 6)) + s.slice(-2); }
+// 순위: ① 통과한 케이스 수(많을수록) ② 통과한 케이스의 미션 시간 합(작을수록) ③ 먼저 낸 제출. 학생마다 가장 좋은 제출 기준
+const better = (a, b) => (a.ac_count !== b.ac_count ? a.ac_count > b.ac_count : (a.total_time ?? 0) !== (b.total_time ?? 0) ? (a.total_time ?? 0) < (b.total_time ?? 0) : a.id < b.id);
 function leaderboard(full) {
   const users = db.prepare('SELECT id, student_id, name FROM users').all();
-  const subs = db.prepare('SELECT id, user_id, created_at, results, ac_count, all_ac, total_time FROM submissions ORDER BY id').all();
-  const by = new Map(users.map((u) => [u.id, { u, count: 0, best: null, bestPartial: null }]));
+  const subs = db.prepare("SELECT id, user_id, created_at, results, ac_count, all_ac, total_time FROM submissions WHERE status = 'done' ORDER BY id").all();
+  const by = new Map(users.map((u) => [u.id, { u, count: 0, best: null }]));
   for (const s of subs) {
     const e = by.get(s.user_id);
     if (!e) continue;
     e.count++;
-    if (s.all_ac && (!e.best || s.total_time < e.best.total_time)) e.best = s;
-    if (!e.bestPartial || s.ac_count > e.bestPartial.ac_count) e.bestPartial = s;
+    if (!e.best || better(s, e.best)) e.best = s;
   }
-  const rows = [...by.values()].filter((e) => e.count > 0).map((e) => {
-    const s = e.best || e.bestPartial;
+  const rows = [...by.values()].filter((e) => e.best).sort((a, b) => (better(a.best, b.best) ? -1 : 1)).map((e, k) => {
+    const s = e.best;
     const res = JSON.parse(s.results);
     return {
+      rank: s.ac_count > 0 ? k + 1 : null,
       studentId: full ? e.u.student_id : maskId(e.u.student_id), name: e.u.name,
-      ranked: !!e.best, totalTime: e.best ? e.best.total_time : null, acCount: s.ac_count, submissions: e.count,
-      at: s.created_at, cases: res.map((r) => ({ id: r.caseId, verdict: r.verdict, time: r.missionTime ?? null })),
+      passCount: s.ac_count, total: GRADED_CASES.length, totalTime: s.ac_count > 0 ? s.total_time : null, submissions: e.count, at: s.created_at,
+      cases: GRADED_CASES.map((c) => { const r = res.find((x) => x.caseId === c.id) || {}; return { id: c.id, verdict: r.verdict || null, time: r.verdict === 'AC' ? r.missionTime : null }; }),
     };
   });
-  rows.sort((a, b) => (b.ranked - a.ranked) || (a.ranked ? a.totalTime - b.totalTime || a.at.localeCompare(b.at) : b.acCount - a.acCount || a.at.localeCompare(b.at)));
-  let rank = 0;
-  for (const r of rows) r.rank = r.ranked ? ++rank : null;
   return rows;
 }
+const lbCases = (full) => GRADED_CASES.map((c) => ({ id: c.id, name: full ? c.name : studentCaseName(c), hidden: !c.public }));
 app.get('/api/leaderboard', (req, res) => {
   const cfg = config();
   const admin = session(req).admin;
   if (!cfg.leaderboardOpen && !admin) return res.json({ open: false, openAt: cfg.leaderboardOpenAt });
-  res.json({ open: cfg.leaderboardOpen, preview: !cfg.leaderboardOpen, cases: CASES.map((c) => ({ id: c.id, name: c.name })), rows: leaderboard(false) });
+  res.json({ open: cfg.leaderboardOpen, preview: !cfg.leaderboardOpen, cases: lbCases(false), rows: leaderboard(false) });
 });
 
 // ====================================================================== 관리자 API
@@ -313,6 +331,7 @@ app.put('/api/admin/settings', requireAdmin, (req, res) => {
     if (!(k in body)) continue;
     const v = String(body[k] ?? '');
     if (k === 'leaderboard_mode') { if (!['auto', 'open', 'closed'].includes(v)) return err(res, 400, 'leaderboard_mode 는 auto/open/closed'); }
+    else if (k === 'day1_solutions') { if (!['open', 'closed'].includes(v)) return err(res, 400, 'day1_solutions 는 open/closed'); }
     else if (v && Number.isNaN(Date.parse(v))) return err(res, 400, `${k}: 날짜 형식이 올바르지 않습니다`);
     setSetting(k, v);
   }
@@ -336,10 +355,10 @@ app.get('/api/admin/users/:id', requireAdmin, (req, res) => {
   const u = db.prepare('SELECT id, student_id, name, created_at FROM users WHERE id = ?').get(+req.params.id);
   if (!u) return err(res, 404, '없는 사용자입니다');
   const p = db.prepare('SELECT files, updated_at FROM projects WHERE user_id = ?').get(u.id);
-  const subs = db.prepare('SELECT id, created_at, results, ac_count, all_ac, total_time FROM submissions WHERE user_id = ? ORDER BY id DESC').all(u.id);
+  const subs = db.prepare(`SELECT ${SUB_COLS} FROM submissions WHERE user_id = ? ORDER BY id DESC`).all(u.id);
   res.json({
     user: u, project: p ? { files: JSON.parse(p.files), updatedAt: p.updated_at } : null,
-    submissions: subs.map((s) => ({ id: s.id, createdAt: s.created_at, results: JSON.parse(s.results), acCount: s.ac_count, allAc: !!s.all_ac, totalTime: s.total_time })),
+    submissions: subs.map((s) => subRow(s, false)),
   });
 });
 app.get('/api/admin/submissions/:id/files', requireAdmin, (req, res) => {
@@ -360,17 +379,29 @@ app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 app.get('/api/admin/submissions', requireAdmin, (req, res) => {
-  const rows = db.prepare(`SELECT s.id, s.created_at, s.ac_count, s.all_ac, s.total_time, s.results, u.student_id, u.name, u.id AS user_id
+  const rows = db.prepare(`SELECT s.id, s.created_at, s.status, s.error, s.ac_count, s.all_ac, s.total_time, s.results, u.student_id, u.name, u.id AS user_id
     FROM submissions s JOIN users u ON u.id = s.user_id ORDER BY s.id DESC LIMIT 200`).all();
   res.json(rows.map((r) => ({ ...r, results: JSON.parse(r.results) })));
 });
-app.get('/api/admin/leaderboard', requireAdmin, (req, res) => res.json({ cases: CASES.map((c) => ({ id: c.id, name: c.name })), rows: leaderboard(true) }));
-app.get('/api/admin/cases', requireAdmin, (req, res) => res.json(CASES.map((c) => ({ ...c, input: caseInput(c) }))));
+app.get('/api/admin/leaderboard', requireAdmin, (req, res) => res.json({ cases: lbCases(true), rows: leaderboard(true) }));
+app.get('/api/admin/cases', requireAdmin, (req, res) => res.json(CASES.map((c) => ({ id: c.id, name: c.name, desc: c.desc, hidden: !c.public, graded: c.graded, input: caseInput(c) }))));
 
 app.use('/api', (req, res) => err(res, 404, '없는 API 입니다'));
+// 본문 크기 초과 등 express 오류를 JSON 으로
+app.use((e, req, res, next) => {
+  if (res.headersSent) return next(e);
+  if (e.type === 'entity.too.large') return err(res, 413, '보낸 데이터가 너무 큽니다');
+  if (e.type === 'entity.parse.failed') return err(res, 400, '요청 형식(JSON)이 올바르지 않습니다');
+  console.error(e);
+  err(res, 500, '서버 오류');
+});
+
+// 서버가 다시 시작되면 채점 중이던 제출을 처음부터 다시 채점 (코드는 제출할 때 저장해 둠)
+for (const r of db.prepare("SELECT id FROM submissions WHERE status = 'judging' ORDER BY id").all()) grader.enqueue(r.id);
 
 app.listen(PORT, () => {
   console.log(`Drone OJ 서버: http://localhost:${PORT}`);
   if (!process.env.ADMIN_PASSWORD) console.log(`⚠ ADMIN_PASSWORD 가 설정되지 않아 임시 관리자 비밀번호를 만들었습니다: ${ADMIN_PASSWORD}`);
-  console.log(`2일차 공개 시각: ${getSettings().day2_open_at}`);
+  console.log(`2일차 공개 시각: ${getSettings().day2_open_at} · 동시 채점 ${grader.size}개 · 케이스당 ${CPU_LIMIT_SEC}초`);
+  console.log(`학생 코드 실행: ${SANDBOX_INFO}`);
 });
