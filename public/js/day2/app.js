@@ -342,8 +342,8 @@ function renderRules() {
     <table class="tbl rp-tbl">
       <tr><td>최고 속력</td><td><b>v_max = ${R.v_max} m/s</b> — 웨이포인트 사이 직선 거리 ÷ 시간 차가 이보다 크면 안 됨</td></tr>
       <tr><td>충돌</td><td>두 드론의 max(|Δx|, |Δy|, |Δz|) &lt; <b>${R.min_sep} m</b> 인 순간이 있으면 충돌 (정확히 ${R.min_sep} 은 허용)</td></tr>
-      <tr><td>도착</td><td>i번 드론의 마지막 위치가 <b>targets[i]</b> 에서 ${R.tol} m 이내 — 도착 뒤에는 그 자리에 머묾</td></tr>
-      <tr><td>시간</td><td>t 는 0 에서 시작해 <b>계속 커져야</b> 함 · 미션 시간 = 가장 늦은 마지막 t (작을수록 좋음, 최대 ${MAX_MISSION_TIME} s)</td></tr>
+      <tr><td>미션</td><td>착륙장(<b>starts</b>)에서 이륙 → 모든 드론이 <b>동시에 ${R.hold}초 이상</b> 자기 목표(<b>targets[i]</b>, 오차 ${R.tol} m)에 → 자기 착륙 지점으로 <b>복귀</b></td></tr>
+      <tr><td>시간</td><td>t 는 0 에서 시작해 <b>계속 커져야</b> 함 · 미션 시간 = 마지막 드론이 착륙한 시각 = 가장 늦은 마지막 t (작을수록 좋음, 최대 ${MAX_MISSION_TIME} s)</td></tr>
       <tr><td>영역</td><td>x ${BOUNDS.x.join('~')} · y ${BOUNDS.y.join('~')} · z 0~${BOUNDS.z[1]} (z 는 위가 +)</td></tr>
       <tr><td>크기</td><td>드론당 웨이포인트 ≤ ${MAX_WAYPOINTS.toLocaleString()}개 · 계산 시간 케이스당 ${CPU_LIMIT_SEC}초</td></tr>
     </table>
@@ -352,13 +352,16 @@ function renderRules() {
   "v_max": ${R.v_max},
   "min_sep": ${R.min_sep},
   "tol": ${R.tol},
-  "starts":  [[${s0.join(', ')}], …],     ← i번 드론의 출발점 (드론 20대)
-  "targets": [[${g0.join(', ')}], …]      ← i번 드론이 가야 할 곳
+  "hold": ${R.hold},                      ← 대형 유지 시간 (초)
+  "starts":  [[${s0.join(', ')}], …],     ← i번 드론의 착륙 지점 (출발점 = 복귀점, 드론 20대)
+  "targets": [[${g0.join(', ')}], …]      ← i번 드론이 대형에서 맡을 자리
 }</pre>
     <h4>출력 (stdout) — <code>plan()</code> 이 돌려준 paths</h4>
     <pre class="rp-json">{"paths": [
-  [[0, ${s0.join(', ')}], [3.0, ${s0[0]}, ${s0[1]}, 3], [3.5, ${s0[0]}, ${s0[1]}, 3], [12.4, ${g0.join(', ')}]],   ← 드론 0
-  …                                                       ← 드론 1 ~ 19
+  [[0, ${s0.join(', ')}], [3.0, ${s0[0]}, ${s0[1]}, 3], [11.9, ${g0.join(', ')}],      ← 드론 0: 이륙 → 목표
+   [14.0, ${g0.join(', ')}],                                      ←          모두 모일 때까지 + 대형 유지 (같은 위치 반복)
+   [22.9, ${s0[0]}, ${s0[1]}, 3], [25.9, ${s0.join(', ')}]],                  ←          복귀 · 착륙
+  …                                                              ← 드론 1 ~ 19
 ]}
  [t, x, y, z]: t초에 (x, y, z) 에 있음. 사이는 직선 · 일정한 속도로 이동
  [3.0 …] → [3.5 …] 처럼 같은 위치를 반복하면 그동안 제자리에서 기다림</pre>
@@ -370,24 +373,26 @@ function renderProblem() {
   const R = casesInfo.rules, G = casesInfo.graded;
   $('problemBody').innerHTML = `
   <h2>드론 20대, 충돌 없이 가장 빠르게</h2>
-  <p>드론 20대의 <b>웨이포인트(시각 + 위치)를 미리 계산</b>하는 프로그램을 작성하세요. i번 드론은 <b>자기 출발점</b>에서 출발해 <b>자기 목표점</b>(같은 번호)에 도착해야 하고, 그동안 어떤 두 드론도 부딪히면 안 됩니다.</p>
+  <p><b>착륙장(5 × 4, 2 m 간격)의 드론 20대로 목표 모양을 만들고 다시 착륙장으로 복귀</b>하는 웨이포인트(시각 + 위치)를 <b>미리 계산</b>하는 프로그램을 작성하세요. i번 드론은 자기 착륙 지점에서 이륙해 자기 목표점(같은 번호)으로 가고, 20대가 <b>동시에 ${R.hold}초 이상</b> 모양을 유지한 뒤 자기 착륙 지점으로 돌아옵니다. 그동안 어떤 두 드론도 부딪히면 안 됩니다.</p>
   <h3>월드</h3>
   <ul><li>드론 20대 · 크기 0.3 × 0.3 × 0.3 m 정육면체 · 위치 = 정육면체 중심</li>
   <li>좌표계: 단위 m · <b>z 는 위가 +</b> (1일차 NED 와 반대 — NED z = −z)</li>
-  <li>출발점·목표점은 케이스마다 다릅니다 (입력으로 주어짐)</li></ul>
+  <li>착륙장 A: 5 × 4 배치, 2 m 간격, z = 0 · i번 드론 착륙 지점 = (2·(i mod 5), 2·⌊i/5⌋, 0) — 모든 케이스 공통</li>
+  <li>목표 모양은 케이스마다 다릅니다 (입력의 targets)</li></ul>
   <h3>비행 규칙</h3>
   <table class="tbl"><tr><th>규칙</th><th>내용</th></tr>
   <tr><td>할당</td><td><b>고정</b> — i번 드론은 targets[i] 로</td></tr>
   <tr><td>속도</td><td>모든 구간에서 속력 ≤ v_max = <b>${R.v_max} m/s</b> (웨이포인트 사이 직선 거리 ÷ 시간). 항상 최고 속도로 갈지, 구간마다 속도를 바꾸거나 기다릴지는 자유</td></tr>
-  <tr><td>도착</td><td>마지막 웨이포인트가 자기 목표점에서 <b>${R.tol} m</b> 이내. 도착한 뒤에는 그 자리에 머무름 (계속 충돌 검사 대상)</td></tr>
+  <tr><td>대형 완성</td><td>20대 모두 자기 목표점에서 <b>${R.tol} m</b> 이내에 <b>동시에 ${R.hold}초 이상</b></td></tr>
+  <tr><td>복귀</td><td>마지막 웨이포인트 = 자기 착륙 지점 (오차 ${R.tol} m). 착륙한 뒤에는 그 자리에 머무름 (계속 충돌 검사 대상)</td></tr>
   <tr><td>충돌</td><td>max(|Δx|, |Δy|, |Δz|) &lt; <b>${R.min_sep}</b> 이 되는 순간이 있으면 충돌 → 그 케이스는 실패. 웨이포인트 사이를 직선 보간해 <b>연속 시간 전체를 해석적으로</b> 검사합니다.</td></tr>
   <tr><td>비행 영역</td><td>z ≥ 0 · x ${BOUNDS.x.join(' ~ ')} · y ${BOUNDS.y.join(' ~ ')} · z ≤ ${BOUNDS.z[1]} · 미션 시간 ≤ ${MAX_MISSION_TIME} s</td></tr>
-  <tr><td>기록</td><td>마지막 드론이 목표에 도착한 시각 = <b>미션 시간</b></td></tr>
+  <tr><td>기록</td><td>마지막 드론이 착륙한 시각 = <b>미션 시간</b></td></tr>
   <tr><td>계산 시간</td><td>케이스당 <b>${CPU_LIMIT_SEC}초</b> 안에 경로를 출력해야 함 (넘으면 시간 초과)</td></tr></table>
   <h3>입력과 출력</h3>
-  <p><b>입력</b> (표준입력, JSON): <code>{"v_max", "starts": [[x,y,z]×20], "targets": [[x,y,z]×20], "min_sep", "tol"}</code></p>
+  <p><b>입력</b> (표준입력, JSON): <code>{"v_max", "starts": [[x,y,z]×20], "targets": [[x,y,z]×20], "min_sep", "tol", "hold"}</code></p>
   <p><b>출력</b> (표준출력, JSON): <code>{"paths": [ [[t,x,y,z], …] × 20 ]}</code> — i번째 경로가 i번 드론.
-  t 는 0 에서 시작해 <b>엄격히 증가</b>, 첫 웨이포인트 = 자기 출발점 (t=0), 마지막 웨이포인트 = 자기 목표점.
+  t 는 0 에서 시작해 <b>엄격히 증가</b>, 첫 웨이포인트 = 자기 착륙 지점 (t=0), 마지막 웨이포인트 = 자기 착륙 지점 (복귀).
   제자리에서 기다리려면 같은 위치를 더 늦은 t 로 한 번 더 적으면 됩니다.
   드론당 웨이포인트 ≤ ${MAX_WAYPOINTS.toLocaleString()}개, 케이스당 출력 ≤ ${(MAX_OUTPUT_CHARS / 1e6).toFixed(0)}M자.</p>
   <pre>{"paths": [
@@ -402,12 +407,12 @@ function renderProblem() {
   ${G.filter((c) => c.hidden).map((c) => `<tr><td>🔒</td><td>${esc(c.name)}</td><td class="dim">채점할 때 서버에서만 실행</td><td>★ 포함</td><td></td></tr>`).join('')}</table>
   <h3>채점 결과</h3>
   <table class="tbl"><tr><th>결과</th><th>의미</th></tr>
-  <tr><td><span class="vchip v-AC">성공</span></td><td>충돌 없이 모두 도착 · 미션 시간 기록</td></tr>
+  <tr><td><span class="vchip v-AC">성공</span></td><td>충돌 없이 대형 완성 후 모두 복귀 · 미션 시간 기록</td></tr>
   <tr><td><span class="vchip v-COL">충돌</span></td><td>드론 i 와 j 가 시각 t 에 충돌 → 그 케이스 실패</td></tr>
   <tr><td><span class="vchip v-CE">컴파일 에러</span></td><td>코드에 문법 오류 → 5개 케이스 모두 실패</td></tr>
   <tr><td><span class="vchip v-TLE">시간 초과</span></td><td>경로 계산이 케이스당 ${CPU_LIMIT_SEC}초를 넘음</td></tr>
   <tr><td><span class="vchip v-RE">런타임 에러</span></td><td>실행 중 예외 발생 (비공개 케이스는 에러 종류와 줄 번호만 표시)</td></tr>
-  <tr><td><span class="vchip v-RV">규칙 위반</span></td><td>속도 초과 · 목표 미도착 · 영역 이탈 · 형식 오류</td></tr></table>
+  <tr><td><span class="vchip v-RV">규칙 위반</span></td><td>속도 초과 · 대형 미완성 · 미복귀 · 영역 이탈 · 형식 오류</td></tr></table>
   <h3>순위</h3>
   <ul><li>① <b>통과한 케이스 수</b>가 많은 순 — 5개 통과는 4개 통과보다 항상 위</li><li>② 통과 수가 같으면 <b>통과한 케이스의 미션 시간 합</b>이 작은 순</li><li>③ 그래도 같으면 먼저 제출한 순 · 내 제출 중 가장 좋은 기록으로 계산</li>
   <li id="deadlineLi"></li></ul>

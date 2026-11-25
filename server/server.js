@@ -247,7 +247,7 @@ app.post('/api/day2/submissions', requireUser, (req, res) => {
 
 // 학생에게 보여 줄 케이스 결과. 비공개 케이스는 입력(좌표·출력값)이 드러나지 않게 요약만
 const CASE_BY_ID = new Map(CASES.map((c) => [c.id, c]));
-const RV_TEXT = { format: () => '출력 형식 오류', speed: (r) => `속도 초과 (드론 ${r.drone})`, bounds: (r) => `비행 영역 이탈 (드론 ${r.drone})`, target: (r) => `목표 미도착 (드론 ${r.drone})`, time: () => '미션 시간 초과', size: () => '출력이 너무 큼' };
+const RV_TEXT = { format: () => '출력 형식 오류', speed: (r) => `속도 초과 (드론 ${r.drone})`, bounds: (r) => `비행 영역 이탈 (드론 ${r.drone})`, return: (r) => `미복귀 (드론 ${r.drone})`, formation: () => '대형 미완성 (모든 드론이 동시에 hold 초 이상 자기 목표에 있어야 함)', time: () => '미션 시간 초과', size: () => '출력이 너무 큼' };
 function studentResult(r) {
   const c = CASE_BY_ID.get(r.caseId);
   const out = { caseId: r.caseId, name: c ? studentCaseName(c) : r.name, hidden: !!r.hidden, state: r.state || r.verdict, verdict: r.verdict || null, missionTime: r.missionTime ?? null, computeMs: r.computeMs ?? null };

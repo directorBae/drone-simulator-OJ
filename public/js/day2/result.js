@@ -12,7 +12,7 @@ function row(r, k) {
   const st = r.verdict || r.state || 'WAIT';
   const running = st === 'RUN';
   const detail = st === 'AC'
-    ? `<b class="res-time">${r.missionTime.toFixed(2)} s</b><span class="dim">미션 시간 (마지막 드론 도착)</span>`
+    ? `<b class="res-time">${r.missionTime.toFixed(2)} s</b><span class="dim">미션 시간 (마지막 드론 착륙)</span>`
     : st === 'WAIT' ? '<span class="dim">순서를 기다리는 중</span>'
       : running ? '<span class="dim">서버에서 경로 계산 중…</span>'
         : `<span class="res-msg">${esc(r.message || '')}</span>`;

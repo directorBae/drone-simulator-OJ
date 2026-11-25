@@ -1,18 +1,19 @@
 /*
  * 2일차 군집 경로 채점기 — 브라우저(▶ 실행: 공개 케이스 즉시 피드백·리플레이)와 서버(✔ 제출: 공식 채점)가 같은 코드를 씁니다.
  *
- * 입력(학생 프로그램의 stdin):  { "v_max", "starts": [[x,y,z]×N], "targets": [[x,y,z]×N], "min_sep", "tol" }
+ * 입력(학생 프로그램의 stdin):  { "v_max", "starts": [[x,y,z]×N], "targets": [[x,y,z]×N], "min_sep", "tol", "hold" }
  * 출력(학생 프로그램의 stdout): { "paths": [ [[t,x,y,z], ...] × N ] }   좌표: m, z 는 위가 +
  *
- * 규칙
- *  - i번 드론은 starts[i] 에서 출발해 targets[i] 에 도착 (할당 고정)
+ * 미션: 착륙장의 드론 N대로 목표 모양을 만들고 다시 착륙장으로 복귀
+ *  - 할당 고정: i번 드론은 starts[i](착륙 지점)에서 출발 → targets[i] → starts[i] 로 복귀
+ *  - 대형 완성: 모든 드론이 자기 목표에서 tol 이내에 "동시에" hold 초 이상 머물러야 함
  *  - 형식: paths 는 드론 수만큼, 각 경로는 [t,x,y,z] 2개 이상, t 는 0 에서 시작해 엄격히 증가
- *  - 시작: 첫 웨이포인트 = starts[i] (t = 0),  끝: 마지막 웨이포인트가 targets[i] 에서 tol 이내
- *  - 웨이포인트 사이는 직선 등속 보간. 마지막 웨이포인트 이후에는 그 자리에 정지 (도착한 뒤에도 충돌 검사)
+ *  - 시작: 첫 웨이포인트 = starts[i] (t = 0),  끝: 마지막 웨이포인트가 starts[i] 에서 tol 이내 (착륙)
+ *  - 웨이포인트 사이는 직선 등속 보간. 마지막 웨이포인트 이후에는 그 자리에 정지
  *  - 속도: 모든 구간에서 속력 ≤ v_max (속도를 일정하게 할지, 구간마다 바꿀지·기다릴지는 자유)
  *  - 영역: z ≥ 0, BOUNDS 안
  *  - 충돌: 두 드론의 중심이 max(|Δx|,|Δy|,|Δz|) < min_sep (0.3) 이 되는 순간이 있으면 충돌 (해석적으로 정확히 검사)
- *  - 미션 시간 = 마지막 드론이 목표에 도착한 시각 (= 마지막 웨이포인트 t 의 최댓값)
+ *  - 미션 시간 = 마지막 드론이 착륙한 시각 (= 마지막 웨이포인트 t 의 최댓값)
  */
 export const BOUNDS = { x: [-30, 40], y: [-30, 40], z: [0, 40] };
 export const MAX_MISSION_TIME = 600;
@@ -120,13 +121,55 @@ function firstCollision(pa, pb, m) {
   return null;
 }
 
+/** 경로가 점 c 에서 r 이내인 시간 구간들 (구간마다 2차 방정식으로 정확히) */
+function nearIntervals(path, c, r) {
+  const out = [];
+  for (let k = 0; k + 1 < path.length; k++) {
+    const [t0, x0, y0, z0] = path[k], [t1, x1, y1, z1] = path[k + 1];
+    const L = t1 - t0;
+    const v = [(x1 - x0) / L, (y1 - y0) / L, (z1 - z0) / L];
+    const d = [x0 - c[0], y0 - c[1], z0 - c[2]];
+    const a = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+    const b = 2 * (v[0] * d[0] + v[1] * d[1] + v[2] * d[2]);
+    const c0 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2] - r * r;
+    if (a < 1e-12) { if (c0 <= 1e-12) out.push([t0, t1]); continue; }
+    const disc = b * b - 4 * a * c0;
+    if (disc < 0) continue;
+    const sq = Math.sqrt(disc);
+    const s1 = Math.max(0, (-b - sq) / (2 * a)), s2 = Math.min(L, (-b + sq) / (2 * a));
+    if (s2 >= s1) out.push([t0 + s1, t0 + s2]);
+  }
+  const last = path[path.length - 1];
+  if (Math.hypot(last[1] - c[0], last[2] - c[1], last[3] - c[2]) <= r + 1e-12) out.push([last[0], Infinity]);
+  return mergeIntervals(out);
+}
+function mergeIntervals(list) {
+  list.sort((p, q) => p[0] - q[0]);
+  const out = [];
+  for (const iv of list) {
+    if (out.length && iv[0] <= out[out.length - 1][1] + 1e-9) out[out.length - 1][1] = Math.max(out[out.length - 1][1], iv[1]);
+    else out.push(iv.slice());
+  }
+  return out;
+}
+function intersectIntervals(A, B) {
+  const out = [];
+  let i = 0, j = 0;
+  while (i < A.length && j < B.length) {
+    const lo = Math.max(A[i][0], B[j][0]), hi = Math.min(A[i][1], B[j][1]);
+    if (hi >= lo) out.push([lo, hi]);
+    if (A[i][1] < B[j][1]) i++; else j++;
+  }
+  return out;
+}
+
 /**
  * 한 테스트 케이스 채점.  input: 케이스 입력,  stdout: 프로그램 출력 문자열
- * 반환: { verdict: 'AC'|'COL'|'RV', kind, message, missionTime?, collision?, drone?, t?, paths? }
+ * 반환: { verdict: 'AC'|'COL'|'RV', kind, message, missionTime?, collision?, formation?, drone?, t?, paths? }
  */
 export function judgeCase(input, stdout) {
   const N = input.starts.length;
-  const vmax = input.v_max, sep = input.min_sep ?? 0.3, tol = input.tol ?? 0.1;
+  const vmax = input.v_max, sep = input.min_sep ?? 0.3, tol = input.tol ?? 0.1, hold = input.hold ?? 1.0;
   if ((stdout || '').length > MAX_OUTPUT_CHARS) {
     return fail('RV', 'size', `출력이 너무 큽니다: ${(MAX_OUTPUT_CHARS / 1e6).toFixed(0)}M자를 넘었습니다. 웨이포인트 수를 줄이거나 좌표를 반올림(예: round(x, 4))해서 출력하세요.`);
   }
@@ -137,7 +180,7 @@ export function judgeCase(input, stdout) {
   const paths = fmt.paths;
   const base = { paths };
 
-  // 영역 · 속도 · 도착
+  // 영역 · 속도 · 복귀
   for (let i = 0; i < N; i++) {
     const p = paths[i];
     for (let k = 0; k < p.length; k++) {
@@ -154,16 +197,16 @@ export function judgeCase(input, stdout) {
         }
       }
     }
-    const last = p[p.length - 1], g = input.targets[i];
-    const miss = Math.hypot(last[1] - g[0], last[2] - g[1], last[3] - g[2]);
+    const last = p[p.length - 1], s0 = input.starts[i];
+    const miss = Math.hypot(last[1] - s0[0], last[2] - s0[1], last[3] - s0[2]);
     if (miss > tol + 1e-9) {
-      return fail('RV', 'target', `목표 미도착: 드론 ${i} 의 마지막 웨이포인트 ${fp(last.slice(1))} 가 자기 목표 ${fp(g)} 에서 ${f2(miss)} m 떨어져 있습니다 (허용 ${tol} m).`, { ...base, drone: i, t: last[0], at: last.slice(1) });
+      return fail('RV', 'return', `미복귀: 드론 ${i} 의 마지막 웨이포인트 ${fp(last.slice(1))} 가 자기 착륙 지점 ${fp(s0)} 에서 ${f2(miss)} m 떨어져 있습니다 (허용 ${tol} m).`, { ...base, drone: i, t: last[0], at: last.slice(1) });
     }
   }
   const missionTime = Math.max(...paths.map((p) => p[p.length - 1][0]));
   if (missionTime > MAX_MISSION_TIME) return fail('RV', 'time', `미션 시간 ${f2(missionTime)}s 가 최대 ${MAX_MISSION_TIME}s 를 넘습니다.`, { ...base, missionTime });
 
-  // 충돌 (도착한 뒤 제자리에 있는 드론도 포함)
+  // 충돌 (착륙장에 있는 드론 · 대기 중인 드론도 포함)
   let col = null;
   for (let i = 0; i < N; i++) {
     for (let j = i + 1; j < N; j++) {
@@ -174,5 +217,21 @@ export function judgeCase(input, stdout) {
   if (col) {
     return fail('COL', 'collision', `충돌: 드론 ${col.i} 와 드론 ${col.j} 가 t=${col.t.toFixed(3)}s 에 ${fp(col.pos)} 부근에서 충돌 (Chebyshev 거리 < ${sep})`, { ...base, missionTime, collision: col });
   }
-  return { verdict: 'AC', kind: 'ok', message: `성공! 미션 시간 ${missionTime.toFixed(2)}s (마지막 드론 도착)`, missionTime, paths };
+  // 대형: 모든 드론이 자기 목표에서 tol 이내인 시간 구간의 교집합이 hold 초 이상
+  let common = [[-Infinity, Infinity]];
+  const never = [];
+  input.targets.forEach((g, i) => {
+    const iv = nearIntervals(paths[i], g, tol);
+    if (!iv.length) never.push(i);
+    common = intersectIntervals(common, iv);
+  });
+  const ok = common.find((iv) => iv[1] - iv[0] >= hold - 1e-9);
+  if (!ok) {
+    const best = common.reduce((m, iv) => Math.max(m, Math.min(iv[1], missionTime) - iv[0]), 0);
+    const why = never.length
+      ? `자기 목표에 한 번도 가지 않은 드론 ${never.length}대 (번호: ${never.slice(0, 8).join(', ')}${never.length > 8 ? ' …' : ''})`
+      : `모든 드론이 동시에 목표에 있었던 최대 시간 ${f2(Math.max(best, 0))}s`;
+    return fail('RV', 'formation', `대형 미완성: 모든 드론이 자기 목표에서 ${tol} m 이내에 동시에 ${hold}s 이상 머물러야 합니다 — ${why}`, { ...base, missionTime, drone: never.length ? never[0] : null });
+  }
+  return { verdict: 'AC', kind: 'ok', message: `성공! 미션 시간 ${missionTime.toFixed(2)}s (대형 완성 t=${f2(ok[0])}s · 마지막 드론 착륙)`, missionTime, formation: { t: ok[0] }, paths };
 }

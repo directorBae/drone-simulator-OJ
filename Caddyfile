@@ -1,0 +1,12 @@
+# HTTPS 앞단 (Caddy): 도메인 인증서를 Let's Encrypt 에서 자동으로 받아 갱신하고, HTTP → HTTPS 로 넘김.
+# 브라우저와는 HTTP/2 · HTTP/3 로 통신 (탭을 여러 개 열어도 연결 수 제한에 걸리지 않음)
+# 도메인은 .env 의 DOMAIN (기본 droneoj.baejeongwon.com)
+
+{$DOMAIN:droneoj.baejeongwon.com} {
+	reverse_proxy droneoj:8080
+}
+
+# 도메인이 아닌 주소(서버 IP 등)로 들어온 HTTP 는 그대로 서버로 — 점검용
+http:// {
+	reverse_proxy droneoj:8080
+}

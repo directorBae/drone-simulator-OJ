@@ -1,14 +1,15 @@
 services:
+  # Drone OJ 서버 (Node + 학생 코드 채점). 밖으로 직접 열지 않고 아래 caddy 를 통해서만 접속
   droneoj:
     build: .
     restart: unless-stopped
-    ports:
-      - "80:8080"   # HTTP
-      - "443:8443"  # HTTPS (Cloudflare → 원본 서버 구간 암호화)
+    expose:
+      - "8080"
     environment:
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:?.env 파일에 ADMIN_PASSWORD=비밀번호 를 넣으세요}" # 값은 .env 에 (git 에 올리지 않음)
       # HTTPS 로 들어온 요청의 로그인 쿠키는 자동으로 Secure. 항상 Secure 로 하려면 .env 에 COOKIE_SECURE=1
       COOKIE_SECURE: "${COOKIE_SECURE:-}"
+      TLS_CERT_FILE: "" # HTTPS 는 앞단 caddy 가 처리
       # JUDGE_WORKERS: "3"                    # 동시에 채점하는 제출 수 (기본: CPU 수 − 1, 최대 4)
       # JUDGE_TIMEOUT_SEC: "30"               # 케이스당 경로 계산 시간 제한
       # JUDGE_MEM_MB: "1024"                  # 학생 프로그램 메모리 제한
@@ -16,4 +17,25 @@ services:
       - NET_ADMIN # 학생 코드(sandbox 사용자)의 네트워크를 iptables 로 막는 데만 씀
     volumes:
       - ./data:/data # SQLite DB (학생 계정 · 코드 · 제출)
-      - ./certs:/certs # HTTPS 인증서 (없으면 처음 켤 때 자체 서명 인증서를 만듦) — git 에 올리지 않음
+      - ./certs:/certs # (예비) 서버 자체 HTTPS 인증서 — 지금은 caddy 가 HTTPS 를 맡음
+
+  # HTTPS 앞단: Let's Encrypt 인증서 자동 발급 · 갱신, HTTP → HTTPS
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - droneoj
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    environment:
+      DOMAIN: "${DOMAIN:-droneoj.baejeongwon.com}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data # 발급받은 인증서 (지우면 다시 발급)
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
