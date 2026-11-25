@@ -3,6 +3,7 @@ services:
   droneoj:
     build: .
     restart: unless-stopped
+    init: true # 종료된 학생 프로세스(좀비)를 거둬 줌 — 없으면 프로세스 수 한도에 계속 쌓임
     expose:
       - "8080"
     environment:
@@ -10,8 +11,8 @@ services:
       # HTTPS 로 들어온 요청의 로그인 쿠키는 자동으로 Secure. 항상 Secure 로 하려면 .env 에 COOKIE_SECURE=1
       COOKIE_SECURE: "${COOKIE_SECURE:-}"
       TLS_CERT_FILE: "" # HTTPS 는 앞단 caddy 가 처리
-      # JUDGE_WORKERS: "3"                    # 동시에 채점하는 제출 수 (기본: CPU 수 − 1, 최대 4)
-      # JUDGE_TIMEOUT_SEC: "30"               # 케이스당 경로 계산 시간 제한
+      # JUDGE_WORKERS: "10"                   # 동시에 채점하는 제출 수 (기본 10, 최대 16 = 격리 사용자 수)
+      # JUDGE_TIMEOUT_SEC: "15"               # 케이스당 경로 계산 CPU 시간 제한 (잠만 자는 코드는 × 5 벽시계로 막음)
       # JUDGE_MEM_MB: "1024"                  # 학생 프로그램 메모리 제한
     cap_add:
       - NET_ADMIN # 학생 코드(sandbox 사용자)의 네트워크를 iptables 로 막는 데만 씀

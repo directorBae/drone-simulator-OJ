@@ -43,7 +43,7 @@ def limit():
         if res is None:
             continue
         try:
-            resource.setrlimit(res, (value, value))
+            resource.setrlimit(res, (value, value + 2) if name == 'RLIMIT_CPU' else (value, value))
         except (ValueError, OSError):
             pass
 

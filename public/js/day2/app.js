@@ -6,7 +6,7 @@ import { judgeCase, VERDICT_NAMES, BOUNDS, MAX_MISSION_TIME, MAX_OUTPUT_CHARS, M
 import { api, events, fmtTime, debounce } from './api.js';
 import { renderLeaderboard } from './lb.js';
 
-let CPU_LIMIT_SEC = 30; // 케이스당 계산 시간 제한 (서버 설정을 받아 씀)
+let CPU_LIMIT_SEC = 15; // 케이스당 계산 시간 제한 (서버 설정을 받아 씀)
 const con = new Console($('console'));
 let me = null, cfg = null, casesInfo = null, isAdmin = false;
 let files = null, saveTimer = null, dirty = false;
@@ -358,7 +358,7 @@ function renderRules() {
       <tr><td>미션</td><td>착륙장(<b>starts</b>)에서 이륙 → 모든 드론이 <b>동시에 ${R.hold}초 이상</b> 자기 목표(<b>targets[i]</b>, 오차 ${R.tol} m)에 → 자기 착륙 지점으로 <b>복귀</b></td></tr>
       <tr><td>시간</td><td>t 는 0 에서 시작해 <b>계속 커져야</b> 함 · 미션 시간 = 마지막 드론이 착륙한 시각 = 가장 늦은 마지막 t (작을수록 좋음, 최대 ${MAX_MISSION_TIME} s)</td></tr>
       <tr><td>영역</td><td>x ${BOUNDS.x.join('~')} · y ${BOUNDS.y.join('~')} · z 0~${BOUNDS.z[1]} (z 는 위가 +)</td></tr>
-      <tr><td>크기</td><td>드론당 웨이포인트 ≤ ${MAX_WAYPOINTS.toLocaleString()}개 · 계산 시간 케이스당 ${CPU_LIMIT_SEC}초</td></tr>
+      <tr><td>크기</td><td>드론당 웨이포인트 ≤ ${MAX_WAYPOINTS.toLocaleString()}개 · 계산 시간 케이스당 ${CPU_LIMIT_SEC}초 (CPU 시간)</td></tr>
     </table>
     <h4>입력 (stdin) — <code>problem</code></h4>
     <pre class="rp-json">{
@@ -401,7 +401,7 @@ function renderProblem() {
   <tr><td>충돌</td><td>max(|Δx|, |Δy|, |Δz|) &lt; <b>${R.min_sep}</b> 이 되는 순간이 있으면 충돌 → 그 케이스는 실패. 웨이포인트 사이를 직선 보간해 <b>연속 시간 전체를 해석적으로</b> 검사합니다.</td></tr>
   <tr><td>비행 영역</td><td>z ≥ 0 · x ${BOUNDS.x.join(' ~ ')} · y ${BOUNDS.y.join(' ~ ')} · z ≤ ${BOUNDS.z[1]} · 미션 시간 ≤ ${MAX_MISSION_TIME} s</td></tr>
   <tr><td>기록</td><td>마지막 드론이 착륙한 시각 = <b>미션 시간</b></td></tr>
-  <tr><td>계산 시간</td><td>케이스당 <b>${CPU_LIMIT_SEC}초</b> 안에 경로를 출력해야 함 (넘으면 시간 초과)</td></tr></table>
+  <tr><td>계산 시간</td><td>케이스당 <b>${CPU_LIMIT_SEC}초</b>(CPU 시간) 안에 경로를 출력해야 함 (넘으면 시간 초과)</td></tr></table>
   <h3>입력과 출력</h3>
   <p><b>입력</b> (표준입력, JSON): <code>{"v_max", "starts": [[x,y,z]×20], "targets": [[x,y,z]×20], "min_sep", "tol", "hold"}</code></p>
   <p><b>출력</b> (표준출력, JSON): <code>{"paths": [ [[t,x,y,z], …] × 20 ]}</code> — i번째 경로가 i번 드론.

@@ -10,10 +10,11 @@
  *   COOKIE_SECURE=1 항상 HTTPS 로만 쿠키 전송 (지정하지 않아도 HTTPS 로 들어온 요청은 자동으로 Secure)
  *   HTTPS_PORT      HTTPS 로도 받을 포트 (기본 8443). TLS_CERT_FILE · TLS_KEY_FILE 이 있을 때만 켜짐
  *   TLS_CERT_FILE / TLS_KEY_FILE  인증서 파일 (Docker 에서는 /certs/origin.pem · /certs/origin.key)
- *   JUDGE_WORKERS   동시에 채점하는 제출 수 (기본: CPU 수 − 1, 최대 4)
- *   JUDGE_TIMEOUT_SEC 케이스당 경로 계산 시간 제한 (기본 30초)
+ *   JUDGE_WORKERS   동시에 채점하는 제출 수 (기본 10, 최대 16 = 격리 사용자 수)
+ *   JUDGE_POOL      경로 검사 워커 수 (기본: CPU 수 − 1, 최대 4)
+ *   JUDGE_TIMEOUT_SEC 케이스당 경로 계산 CPU 시간 제한 (기본 15초, 잠만 자는 코드는 × JUDGE_WALL_FACTOR(5) 벽시계로)
  *   JUDGE_MEM_MB    학생 프로그램 메모리 제한 (기본 1024MB, 리눅스)
- *   SANDBOX_USER    학생 코드를 실행할 사용자 (기본 sandbox, root 로 실행 중일 때만 사용) — sandbox.js 참고
+ *   SANDBOX_USER    학생 코드를 실행할 사용자 이름 앞부분 (기본 sandbox → sandbox1 … sandbox16, root 로 실행 중일 때만) — sandbox.js 참고
  */
 import express from 'express';
 import fs from 'node:fs';
@@ -438,6 +439,6 @@ app.listen(PORT, () => {
       .listen(HTTPS_PORT, () => console.log(`HTTPS: 포트 ${HTTPS_PORT} (인증서 ${cert})`));
   }
   if (!process.env.ADMIN_PASSWORD) console.log(`⚠ ADMIN_PASSWORD 가 설정되지 않아 임시 관리자 비밀번호를 만들었습니다: ${ADMIN_PASSWORD}`);
-  console.log(`2일차 공개 시각: ${getSettings().day2_open_at} · 동시 채점 ${grader.size}개 · 케이스당 ${CPU_LIMIT_SEC}초`);
+  console.log(`2일차 공개 시각: ${getSettings().day2_open_at} · 동시 채점 ${grader.size}개 · 케이스당 CPU ${CPU_LIMIT_SEC}초`);
   console.log(`학생 코드 실행: ${SANDBOX_INFO}`);
 });

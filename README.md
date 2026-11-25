@@ -108,12 +108,13 @@ docker compose up -d --build          # 80 포트 → 컨테이너 8080
 - 데이터: `./data/droneoj.db` (학생 계정 · 코드 · 제출). 이 파일만 백업하면 됩니다.
 - AWS EC2 / Lightsail: Ubuntu에 Docker 설치 → 위 명령 → 보안 그룹에서 80(또는 443) 열기.
 - **학생 코드 실행 (2일차 제출)**: 컨테이너 안에서 Python 3로 실행합니다. 격리는 다음과 같습니다.
-  - 권한 없는 `sandbox` 사용자로 실행하고, 환경 변수는 비웁니다.
-  - 메모리(`JUDGE_MEM_MB`) · CPU 시간 · 파일 크기 · 프로세스 수를 제한합니다.
+  - 권한 없는 사용자로 실행하고, 환경 변수는 비웁니다. 채점 칸마다 다른 사용자(`sandbox1`~`sandbox16`)라서 동시에 채점 중인 학생끼리 서로의 코드를 읽거나 프로세스 수 한도(fork 폭탄)를 함께 쓰지 않습니다.
+  - 메모리(`JUDGE_MEM_MB`) · CPU 시간(`JUDGE_TIMEOUT_SEC`) · 파일 크기 · 프로세스 수를 제한합니다. 잠만 자는 코드는 CPU 시간 × 5의 벽시계 한도로 끊고, 끝나면 자식 프로세스까지 모두 정리합니다.
+  - 실행 폴더는 읽기 전용이고 `/tmp`에도 쓸 수 없어, 학생 코드가 디스크를 채울 수 없습니다.
   - 서버 코드(비공개 케이스 포함)와 DB는 root만 읽을 수 있습니다.
   - 네트워크는 iptables로 막습니다. 이를 위해 `docker-compose.yml`에 `cap_add: [NET_ADMIN]`이 들어 있습니다.
   - 컨테이너 밖(Windows 등)에서 직접 실행하면 격리 없이 같은 사용자로 돌아가니 개발용으로만 쓰세요. 서버 시작 로그에 어느 쪽인지 나옵니다.
-- 서버 크기: 동시에 채점하는 제출 수가 `CPU 수 − 1`(최대 4)이고, 각 채점이 학생 Python 프로세스 하나(최대 `JUDGE_MEM_MB`)와 채점 워커 하나(최대 3GB)를 씁니다. **4 vCPU · 16GB**(예: m7i.xlarge, t3.xlarge)면 제출이 몰려도 여유가 있습니다. 수업 시간에만 켜 두는 경우 인스턴스를 *중지*(종료 아님)하면 EBS의 `./data`가 그대로 남습니다. 켤 때마다 IP가 바뀌니 탄력적 IP나 도메인을 연결하세요.
+- 서버 크기: 동시에 채점하는 제출 수가 `JUDGE_WORKERS`(기본 10)이고, 각 채점이 학생 Python 프로세스 하나(최대 `JUDGE_MEM_MB`)를 씁니다. 경로 검사는 따로 `JUDGE_POOL`(CPU 수 − 1, 최대 4)개의 워커(각 최대 3GB)에서 합니다. 시간 제한이 CPU 시간이라 칸 수가 CPU 수보다 많아도 공정합니다(대신 몰리면 각 채점이 느려짐). **4 vCPU · 16GB**(예: m7i.xlarge, t3.xlarge)면 제출이 몰려도 여유가 있습니다. 수업 시간에만 켜 두는 경우 인스턴스를 *중지*(종료 아님)하면 EBS의 `./data`가 그대로 남습니다. 켤 때마다 IP가 바뀌니 탄력적 IP나 도메인을 연결하세요.
 - 첫 화면(`/`)에 들어오면 Python 엔진·3D·편집기 파일(압축 기준 약 6MB)을 미리 받아 두고, 1·2일차 화면은 준비가 끝날 때까지 로딩 화면을 보여 줍니다. 수업 전에 첫 화면을 한 번 열어 두게 하면 강의실 인터넷이 덜 붐빕니다.
 - HTTPS: 로드밸런서(ALB)나 nginx 뒤에 두고 `COOKIE_SECURE=1`을 설정하세요. SSE(`/api/events`)를 쓰므로 nginx라면 `proxy_buffering off;`가 필요합니다.
 - 브라우저는 HTTP/1.1에서 같은 서버에 연결을 6개까지만 엽니다. 실시간 알림(SSE)은 보이는 탭에서만 연결하고, 탭을 내리면 닫습니다. 그래도 강사 PC처럼 탭을 많이 띄워 두는 환경이라면 HTTPS(HTTP/2) 뒤에 두는 것이 좋습니다. HTTP/2는 연결 하나로 요청을 모두 처리합니다.
@@ -137,10 +138,12 @@ ADMIN_PASSWORD=비밀번호 PORT=8080 npm start
 | `ADMIN_PASSWORD` | (없으면 시작할 때 무작위로 만들어 로그에 출력) | `/uranusadmin` 로그인 |
 | `DATA_DIR` | `./data` | SQLite 위치 |
 | `COOKIE_SECURE` | – | `1`이면 HTTPS에서만 쿠키 전송 |
-| `JUDGE_WORKERS` | CPU 수 − 1 (최대 4) | 동시에 채점하는 제출 수 |
-| `JUDGE_TIMEOUT_SEC` | 30 | 케이스당 경로 계산 시간 제한 |
+| `JUDGE_WORKERS` | 10 (최대 16) | 동시에 채점하는 제출 수 |
+| `JUDGE_POOL` | CPU 수 − 1 (최대 4) | 경로 검사 워커 수 |
+| `JUDGE_TIMEOUT_SEC` | 15 | 케이스당 경로 계산 CPU 시간 제한 |
+| `JUDGE_WALL_FACTOR` | 5 | 벽시계 한도 = CPU 시간 제한 × 이 값 (잠만 자는 코드 차단) |
 | `JUDGE_MEM_MB` | 1024 | 학생 프로그램 메모리 제한 (리눅스) |
-| `SANDBOX_USER` | sandbox | 학생 코드를 실행할 사용자 (서버가 root로 돌 때만 사용) |
+| `SANDBOX_USER` | sandbox | 학생 코드를 실행할 사용자 이름 앞부분 → `sandbox1`… (서버가 root로 돌 때만 사용) |
 | `PYTHON_BIN` | python3 (Windows는 python) | 학생 코드를 실행할 파이썬 |
 
 ### 관리자 페이지 (`/uranusadmin`)
