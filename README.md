@@ -113,6 +113,13 @@ docker compose up -d --build          # 80 포트 → 컨테이너 8080
 - HTTPS: 로드밸런서(ALB)나 nginx 뒤에 두고 `COOKIE_SECURE=1`을 설정하세요. SSE(`/api/events`)를 쓰므로 nginx라면 `proxy_buffering off;`가 필요합니다.
 - 브라우저는 HTTP/1.1에서 같은 서버에 연결을 6개까지만 엽니다. 실시간 알림(SSE)은 보이는 탭에서만 연결하고, 탭을 내리면 닫습니다. 그래도 강사 PC처럼 탭을 많이 띄워 두는 환경이라면 HTTPS(HTTP/2) 뒤에 두는 것이 좋습니다. HTTP/2는 연결 하나로 요청을 모두 처리합니다.
 
+### HTTPS · Cloudflare (운영 주소 `droneoj.baejeongwon.com`)
+- 컨테이너는 80(HTTP)과 **443(HTTPS)** 을 함께 엽니다. `./certs/origin.pem` · `origin.key`가 없으면 처음 켤 때 자체 서명 인증서를 만듭니다. 이 상태로 Cloudflare SSL 모드 **Full**을 쓸 수 있습니다.
+- Cloudflare 원본 인증서(SSL/TLS → Origin Server → Create Certificate)를 `./certs/origin.pem` · `origin.key`로 바꾸고 `docker compose restart`하면 **Full (strict)** 로 쓸 수 있습니다. `certs/`는 git에 올라가지 않습니다.
+- HTTPS로 들어온 요청(`X-Forwarded-Proto` 포함)에는 로그인 쿠키에 자동으로 `Secure`가 붙습니다.
+- Cloudflare에서 **Rocket Loader는 끄고**, "Cache Everything" 규칙은 쓰지 마세요. 모듈 스크립트와 실시간 알림(SSE)이 깨집니다.
+- 최신 Chrome은 `http://IP` 주소를 자동으로 `https://`로 바꿔 접속합니다. 학생에게는 반드시 HTTPS 도메인을 안내하세요.
+
 ### 직접 실행
 ```bash
 cd server && npm ci
