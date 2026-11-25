@@ -40,4 +40,10 @@ export function events(handlers, { onResume } = {}) {
   return { close };
 }
 
+/** 알림이 한꺼번에 몰려와도 ms 동안 한 번만 실행 (마감 직전 제출이 몰릴 때 다시 불러오기 폭주 방지) */
+export function debounce(fn, ms = 1500) {
+  let timer = null;
+  return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
+}
+
 export const fmtTime = (iso) => (iso ? new Date(iso).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '');

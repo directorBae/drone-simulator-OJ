@@ -3,7 +3,7 @@ import { ReplayScene } from './replay.js';
 import { FileTree } from './files.js';
 import { STARTER } from './starter.js';
 import { judgeCase, VERDICT_NAMES, BOUNDS, MAX_MISSION_TIME, MAX_OUTPUT_CHARS, MAX_WAYPOINTS } from './judge.js';
-import { api, events, fmtTime } from './api.js';
+import { api, events, fmtTime, debounce } from './api.js';
 import { renderLeaderboard } from './lb.js';
 
 let CPU_LIMIT_SEC = 30; // 케이스당 계산 시간 제한 (서버 설정을 받아 씀)
@@ -91,7 +91,8 @@ async function start(user) {
   if (isAdmin) setupAdminSamples();
   loadSubmissions();
   loadLeaderboard();
-  events({ leaderboard: () => loadLeaderboard(), judged: () => loadSubmissions(), config: (c) => { cfg = c; renderDeadline(); loadLeaderboard(); } },
+  const lbSoon = debounce(loadLeaderboard), subsSoon = debounce(loadSubmissions);
+  events({ leaderboard: lbSoon, judged: subsSoon, config: (c) => { cfg = c; renderDeadline(); lbSoon(); } },
     { onResume: () => { loadLeaderboard(); loadSubmissions(); api('/api/config').then((c) => { cfg = c; renderDeadline(); }).catch(() => {}); } });
   renderDeadline();
   con.sys(`2일차 군집 경로 챌린지 — ${user.name}님 환영합니다. 공개 케이스 4개를 ▶ 실행으로 확인하고, ✔ 제출로 공식 채점(공개 2 + 비공개 3)을 받으세요.`);

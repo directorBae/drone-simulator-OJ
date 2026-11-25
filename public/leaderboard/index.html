@@ -14,7 +14,7 @@
   <main id="board" class="bb-main"></main>
   <div id="ticker" class="bb-ticker"></div>
   <script type="module">
-    import { api, events } from '../js/day2/api.js';
+    import { api, events, debounce } from '../js/day2/api.js';
     import { renderLeaderboard } from '../js/day2/lb.js';
     const $ = (id) => document.getElementById(id);
     async function load() {
@@ -32,7 +32,7 @@
       if (cd) { const ms = Date.parse(cd.dataset.at) - Date.now(); cd.textContent = ms > 0 ? `공개까지 ${Math.floor(ms / 60000)}분 ${Math.floor(ms / 1000) % 60}초` : '곧 공개됩니다'; }
     }, 500);
     events({
-      leaderboard: load, config: load,
+      leaderboard: debounce(load, 1000), config: load,
       submission: (s) => { const t = $('ticker'); t.textContent = `📥 ${s.name} 님 제출 — ${s.passCount === s.total ? `🎉 ${s.total}개 모두 통과!` : `${s.passCount}/${s.total} 통과`}`; t.classList.remove('show'); void t.offsetWidth; t.classList.add('show'); },
     }, { onResume: load });
     load();

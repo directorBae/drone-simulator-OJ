@@ -36,7 +36,7 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || crypto.randomBytes(6).toStr
 const SESSION_DAYS = 14;
 const grader = new Grader({
   size: +process.env.JUDGE_WORKERS || 0,
-  onProgress: (id) => broadcast('progress', { id }),
+  // 케이스별 진행은 결과 화면이 1초마다 직접 확인하므로 모든 학생에게 알리지 않음
   onDone: (id, r) => {
     broadcast('judged', { id });
     if (!r) return;
@@ -109,6 +109,7 @@ app.get('/api/events', (req, res) => {
   req.on('close', () => clients.delete(res));
 });
 function broadcast(event, data = {}) {
+  if (event === 'leaderboard') lbCache.clear(); // 순위가 바뀔 수 있으면 다시 계산
   const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const c of clients) c.write(msg);
 }
@@ -287,7 +288,13 @@ app.get('/api/day2/submissions/:id/files', requireUser, (req, res) => {
 function maskId(s) { return s.length <= 4 ? s : s.slice(0, 4) + '*'.repeat(Math.max(0, s.length - 6)) + s.slice(-2); }
 // 순위: ① 통과한 케이스 수(많을수록) ② 통과한 케이스의 미션 시간 합(작을수록) ③ 먼저 낸 제출. 학생마다 가장 좋은 제출 기준
 const better = (a, b) => (a.ac_count !== b.ac_count ? a.ac_count > b.ac_count : (a.total_time ?? 0) !== (b.total_time ?? 0) ? (a.total_time ?? 0) < (b.total_time ?? 0) : a.id < b.id);
+// 스코어보드는 바뀔 때(broadcast('leaderboard'))까지 계산 결과를 재사용 — 학생 수만큼 동시에 요청이 와도 한 번만 계산
+const lbCache = new Map();
 function leaderboard(full) {
+  if (!lbCache.has(full)) lbCache.set(full, computeLeaderboard(full));
+  return lbCache.get(full);
+}
+function computeLeaderboard(full) {
   const users = db.prepare('SELECT id, student_id, name FROM users').all();
   const subs = db.prepare("SELECT id, user_id, created_at, results, ac_count, all_ac, total_time FROM submissions WHERE status = 'done' ORDER BY id").all();
   const by = new Map(users.map((u) => [u.id, { u, count: 0, best: null }]));
